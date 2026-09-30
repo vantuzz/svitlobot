@@ -9,7 +9,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/andrewjswan/esphome-components
-      ref: main
+      ref: 6b0202c47a5629358624271d062196b17ad3a340
     components: [shadow]
     refresh: 60s
 
