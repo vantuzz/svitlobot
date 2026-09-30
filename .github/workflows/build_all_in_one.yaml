@@ -83,7 +83,7 @@ jobs:
         id: esphome-build
         with:
           yaml-file: all-in-one/${{ matrix.config-file }}
-          version: latest
+          version: 2026.5.1
           complete-manifest: true
           release-summary: ${{ inputs.release-summary }}
           release-url: ${{ inputs.release-url }}
