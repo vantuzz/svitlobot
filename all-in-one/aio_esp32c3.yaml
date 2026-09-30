@@ -9,17 +9,12 @@ esp32:
     type: esp-idf
 
 dashboard_import:
-  package_import_url: github://andrewjswan/svitlobot/all-in-one/aio_esp32c3.yaml@main
+  package_import_url: github://vantuzz/svitlobot/all-in-one/aio_esp32c3.yaml@trusted-aio
 
 packages:
-  remote_package:
-    url: https://github.com/andrewjswan/svitlobot
-    files:
-      - packages/common.yaml
-      - packages/svitlobot.yaml
-      - packages/healthcheck.yaml
-      - packages/custom_url.yaml
-      - packages/sub_devices_all_in_one.yaml
-      - packages/esp32.yaml
-      - packages/http_ota.yaml
-    refresh: 1s
+  - !include ../packages/common.yaml
+  - !include ../packages/svitlobot.yaml
+  - !include ../packages/healthcheck.yaml
+  - !include ../packages/custom_url.yaml
+  - !include ../packages/sub_devices_all_in_one.yaml
+  - !include ../packages/esp32.yaml
