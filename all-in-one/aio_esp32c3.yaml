@@ -12,11 +12,10 @@ dashboard_import:
   package_import_url: github://vantuzz/svitlobot/all-in-one/aio_esp32c3.yaml@trusted-aio
 
 packages:
-  - !include ../packages/common.yaml
+  - !include ../packages/trusted_aio_common.yaml
   - !include ../packages/trusted_aio_svitlobot.yaml
   - !include ../packages/healthcheck.yaml
   - !include ../packages/custom_url.yaml
   - !include ../packages/sub_devices_all_in_one.yaml
   - !include ../packages/esp32.yaml
-  - !include ../packages/trusted_aio_security.yaml
   - !include ../packages/trusted_aio_delivery.yaml
