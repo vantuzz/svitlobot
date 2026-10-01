@@ -142,7 +142,7 @@ text:
     optimistic: true
     min_length: 0
     max_length: 15
-    mode: text
+    mode: password
     restore_value: true
     icon: mdi:key-chain-variant
     entity_category: config
