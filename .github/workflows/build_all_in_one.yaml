@@ -78,6 +78,35 @@ jobs:
     steps:
       - name: Checkout source code
         uses: actions/checkout@v7
+      - name: Create trusted AIO secrets
+        if: matrix.config-file == 'aio_esp32c3.yaml'
+        shell: bash
+        env:
+          API_ENCRYPTION_KEY: ${{ secrets.API_ENCRYPTION_KEY }}
+          OTA_PASSWORD: ${{ secrets.OTA_PASSWORD }}
+          WEB_PASSWORD: ${{ secrets.WEB_PASSWORD }}
+          FALLBACK_AP_PASSWORD: ${{ secrets.FALLBACK_AP_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          secret_map = {
+              "api_encryption_key": "API_ENCRYPTION_KEY",
+              "ota_password": "OTA_PASSWORD",
+              "web_password": "WEB_PASSWORD",
+              "fallback_ap_password": "FALLBACK_AP_PASSWORD",
+          }
+          missing = [env_name for env_name in secret_map.values() if not os.environ.get(env_name)]
+          if missing:
+              print("Missing required GitHub Actions secrets: " + ", ".join(missing), file=sys.stderr)
+              sys.exit(1)
+
+          with open("all-in-one/secrets.yaml", "w", encoding="utf-8") as handle:
+              for yaml_name, env_name in secret_map.items():
+                  handle.write(f"{yaml_name}: {json.dumps(os.environ[env_name])}\n")
+          PY
       - name: Build firmware
         uses: esphome/build-action@v7
         id: esphome-build
