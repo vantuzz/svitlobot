@@ -78,6 +78,18 @@ jobs:
     steps:
       - name: Checkout source code
         uses: actions/checkout@v7
+      # ESPHome embeds API/OTA/WebUI/AP credentials in the compiled firmware.
+      # Public Actions artifacts are readable by third parties.
+      - name: Prevent public build of credential-bearing firmware
+        if: matrix.config-file == 'aio_esp32c3.yaml'
+        shell: bash
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [ "$REPOSITORY_PRIVATE" != "true" ]; then
+            echo "::error::Trusted ESP32-C3 firmware contains compiled-in credentials. Build this profile in a private repository, not in public Actions artifacts."
+            exit 1
+          fi
       - name: Create trusted AIO secrets
         if: matrix.config-file == 'aio_esp32c3.yaml'
         shell: bash
