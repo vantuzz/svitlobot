@@ -182,28 +182,6 @@ text:
       sorting_group_id: svitlobot_group
       sorting_weight: 5
 
-select:
-  - platform: template
-    name: "Connection Mode"
-    id: svitlobot_connection_mode
-    options:
-      - Direct
-      - Custom Relay
-    initial_option: Direct
-    restore_value: true
-    optimistic: true
-    entity_category: config
-    web_server:
-      sorting_group_id: svitlobot_group
-      sorting_weight: 4
-    set_action:
-      - lambda: |-
-          id(svitlobot_send_errors) = -1;
-          id(svitlobot_had_success) = false;
-          id(svitlobot_status).publish_state(false);
-          id(svitlobot_response_code).publish_state("");
-          id(svitlobot_response_duration).publish_state(NAN);
-
   - platform: template
     name: "Relay URL"
     id: svitlobot_relay_url
@@ -233,6 +211,28 @@ select:
     web_server:
       sorting_group_id: svitlobot_group
       sorting_weight: 7
+
+select:
+  - platform: template
+    name: "Connection Mode"
+    id: svitlobot_connection_mode
+    options:
+      - Direct
+      - Custom Relay
+    initial_option: Direct
+    restore_value: true
+    optimistic: true
+    entity_category: config
+    web_server:
+      sorting_group_id: svitlobot_group
+      sorting_weight: 4
+    set_action:
+      - lambda: |-
+          id(svitlobot_send_errors) = -1;
+          id(svitlobot_had_success) = false;
+          id(svitlobot_status).publish_state(false);
+          id(svitlobot_response_code).publish_state("");
+          id(svitlobot_response_duration).publish_state(NAN);
 
 binary_sensor:
   - platform: template
