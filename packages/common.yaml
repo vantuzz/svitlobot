@@ -17,12 +17,9 @@ esphome:
 
 api:
   reboot_timeout: 0s
-  encryption:
-    key: !secret api_encryption_key
 
 ota:
   - platform: esphome
-    password: !secret ota_password
   - platform: web_server
 
 logger:
@@ -37,14 +34,10 @@ web_server:
   log: true
   ota: false
   version: 3
-  auth:
-    username: svitlobot
-    password: !secret web_password
 
 wifi:
   id: esp_wifi
-  ap:
-    password: !secret fallback_ap_password
+  ap: {}
 
 captive_portal:
 
