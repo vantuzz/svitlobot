@@ -29,7 +29,6 @@ binary_sensor:
     id: restart_recommended
     entity_category: diagnostic
     icon: mdi:restart-alert
-    update_interval: 10s
     lambda: |-
       return id(esp_wifi).is_connected() &&
              id(svitlobot_had_success) && id(healthcheck_had_success) &&
