@@ -4,7 +4,7 @@ Only `all-in-one/aio_esp32c3.yaml` uses the trusted common, SvitloBot and delive
 
 ## Build-time GitHub Actions Secrets
 
-Set these repository Actions secrets before a manual `Build / All-In-One` run on `trusted-aio`:
+Compile this personalized firmware **only in a private repository or local environment**. The GitHub workflow refuses the ESP32-C3 build in a public repository: the compiled API encryption key and OTA/WebUI/fallback-AP credentials must not be exposed in downloadable public Actions artifacts. Keep the public `trusted-aio` branch source-only. Add these four Actions secrets to the **private** build repository before a manual `Build / All-In-One` run:
 
 - `API_ENCRYPTION_KEY`: ESPHome API Noise key; base64 encoding of 32 random bytes.
 - `OTA_PASSWORD`: native ESPHome OTA password.
@@ -34,7 +34,7 @@ HTTP redirects are disabled for this trusted AIO profile, including Custom URL. 
 
 ## Provisioning order
 
-1. Configure the four GitHub Actions secrets and run the workflow against `trusted-aio`. Verify the ESP32-C3 build succeeded.
+1. Bring the trusted branch into a separate **private** build repository (or use a secure local checkout). Configure the four GitHub Actions secrets there and run `Build / All-In-One`; verify the ESP32-C3 build. Do not run a personalized firmware build as a public GitHub Actions artifact.
 2. Keep the current Wi-Fi working while applying the normal OTA binary; do not erase NVS. Add the API encryption key to Home Assistant when prompted.
 3. Deploy and test the Cloudflare Worker independently, with its own `SVITLOBOT_KEY` and `RELAY_TOKEN` secrets.
 4. Enter Relay URL/Token in ESPHome via authenticated WebUI or (preferably) encrypted HA API. Change Connection Mode to Custom Relay and verify an HTTP 200 plus SvitloBot heartbeat.
