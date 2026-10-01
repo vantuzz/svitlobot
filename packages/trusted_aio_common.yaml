@@ -1,0 +1,148 @@
+substitutions:
+  heartbeat_interval: "55"  # in seconds
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  # name_add_mac_suffix: true
+  comment: $comment
+  build_path: ./.build/$device
+  project:
+    name: "${project_name}"
+    version: "${project_version}"
+  on_boot:
+    - priority: 600
+      then:
+        - script.execute: turn_off_log
+
+api:
+  reboot_timeout: 0s
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+  - platform: web_server
+
+logger:
+  level: INFO
+
+mdns:
+  disabled: false
+
+web_server:
+  id: esp_web
+  port: 80
+  log: true
+  ota: false
+  version: 3
+  auth:
+    username: svitlobot
+    password: !secret web_password
+
+wifi:
+  id: esp_wifi
+  ap:
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+improv_serial:
+
+debug:
+  update_interval: never
+
+switch:
+  - platform: template
+    name: "Show Log"
+    id: show_log
+    icon: mdi:math-log
+    optimistic: true
+    restore_mode: ALWAYS_ON
+    entity_category: config
+    disabled_by_default: true
+    on_state:
+      - lambda: |-
+          id(esp_web)->set_expose_log(x);
+
+script:
+  - id: site_ping
+    then:
+      - script.execute: before_ping
+      - script.wait: before_ping
+      - wait_until:
+          condition:
+            wifi.connected:
+          timeout: 15s
+      - logger.log: "Pinging..."
+    mode: single
+
+  - id: before_ping
+    then:
+      - logger.log: "Prepare for ping..."
+
+  - id: turn_off_log
+    then:
+      - wait_until:
+          condition:
+            wifi.connected:
+      - delay: 3s
+      - logger.log: "Turn off log after start..."
+      - switch.turn_off: show_log
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    entity_category: diagnostic
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_signal_dbm
+    entity_category: diagnostic
+    icon: mdi:signal
+
+button:
+  - platform: restart
+    name: "Restart"
+    id: Restart
+    entity_category: diagnostic
+    icon: mdi:restart
+
+  - platform: factory_reset
+    name: "Restart with Factory Default Settings"
+    id: Reset
+    entity_category: diagnostic
+    disabled_by_default: true
+
+text_sensor:
+  - platform: template
+    name: ESPHome Version
+    icon: mdi:new-box
+    entity_category: diagnostic
+    lambda: |-
+      return std::string(ESPHOME_VERSION);
+
+  - platform: debug
+    reset_reason:
+      name: "Reset Reason"
+      disabled_by_default: true
+      entity_category: diagnostic
+
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      id: ip_address
+      disabled_by_default: true
+      entity_category: diagnostic
+      icon: mdi:ip
+    ssid:
+      name: "Connected SSID"
+      disabled_by_default: true
+      entity_category: diagnostic
+      icon: mdi:access-point-network
+    mac_address:
+      name: "Mac Address"
+      disabled_by_default: true
+      entity_category: diagnostic
+      icon: mdi:console-network
