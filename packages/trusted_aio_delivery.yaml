@@ -185,4 +185,3 @@ text_sensor:
     web_server:
       sorting_group_id: custom_url_group
       sorting_weight: 12
-
