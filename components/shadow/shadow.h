@@ -32,6 +32,10 @@ class Shadow final : public Component
 
   void set_script(script::Script<> *script);
   void set_shadow_interval(uint32_t shadow_interval) { this->shadow_interval_.store(shadow_interval, std::memory_order_release); }
+  // Configuration epoch is shared between HA/WebUI callbacks and the worker.
+  // Results from an HTTP request begun under a different epoch must be ignored.
+  uint32_t config_epoch() const { return this->config_epoch_.load(std::memory_order_acquire); }
+  void invalidate_config() { this->config_epoch_.fetch_add(1, std::memory_order_acq_rel); }
   void set_startup_delay(uint32_t startup_delay) { this->startup_delay_ = startup_delay; }
   void set_shadow_priority(uint8_t shadow_priority) { this->shadow_priority_ = shadow_priority; }
 
@@ -44,6 +48,7 @@ class Shadow final : public Component
   script::Script<> *script{nullptr};
   std::atomic<uint32_t> shadow_interval_{60};
   std::atomic<bool> suspended_{false};
+  std::atomic<uint32_t> config_epoch_{0};
   uint32_t startup_delay_{0};
   uint8_t shadow_priority_{1};
 
