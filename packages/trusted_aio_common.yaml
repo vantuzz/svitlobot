@@ -10,10 +10,7 @@ esphome:
   project:
     name: "${project_name}"
     version: "${project_version}"
-  on_boot:
-    - priority: 600
-      then:
-        - script.execute: turn_off_log
+  # No boot-time WebUI log exposure; users may opt in with Show Log.
 
 api:
   reboot_timeout: 0s
@@ -39,7 +36,7 @@ mdns:
 web_server:
   id: esp_web
   port: 80
-  log: true
+  log: false
   # Authenticated local WebUI OTA is enabled by ota.platform: web_server above.
   version: 3
   auth:
@@ -64,7 +61,7 @@ switch:
     id: show_log
     icon: mdi:math-log
     optimistic: true
-    restore_mode: ALWAYS_ON
+    restore_mode: ALWAYS_OFF
     entity_category: config
     disabled_by_default: true
     on_state:
@@ -86,15 +83,6 @@ script:
   - id: before_ping
     then:
       - logger.log: "Prepare for ping..."
-
-  - id: turn_off_log
-    then:
-      - wait_until:
-          condition:
-            wifi.connected:
-      - delay: 3s
-      - logger.log: "Turn off log after start..."
-      - switch.turn_off: show_log
 
 sensor:
   - platform: uptime
