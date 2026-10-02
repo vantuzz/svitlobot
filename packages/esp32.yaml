@@ -18,7 +18,6 @@ shadow:
   script_id: site_ping
   startup_delay: 5s
   interval: ${heartbeat_interval}s
-  priority: 3
 
 sensor:
   - platform: internal_temperature
