@@ -16,6 +16,10 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: '0'
+  - id: svitlobot_request_revision
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
 
 web_server:
   version: 3
@@ -63,6 +67,7 @@ script:
             - script.execute: before_svitlobot_request
             - script.wait: before_svitlobot_request
             - lambda: |-
+                id(svitlobot_request_revision) = id(svitlobot).config_epoch();
                 ++id(svitlobot_attempt_count);
                 id(svitlobot_request_count).publish_state(id(svitlobot_attempt_count));
                 id(svitlobot_delivery_state).publish_state("Sending");
@@ -83,13 +88,20 @@ script:
                       capture_response: false
                       on_response:
                         then:
-                          - lambda: id(svitlobot_set_state)->execute(response->status_code, response->duration_ms);
+                          - lambda: |-
+                              if (id(svitlobot).config_epoch() == id(svitlobot_request_revision)) {
+                                id(svitlobot_set_state)->execute(response->status_code, response->duration_ms);
+                              } else {
+                                ESP_LOGW("SvitloBot", "Ignored stale response (configuration changed)");
+                              }
                       on_error:
                         then:
-                          - script.execute:
-                              id: svitlobot_set_state
-                              code: -1
-                              duration: 0
+                          - lambda: |-
+                              if (id(svitlobot).config_epoch() == id(svitlobot_request_revision)) {
+                                id(svitlobot_set_state)->execute(-1, 0);
+                              } else {
+                                ESP_LOGW("SvitloBot", "Ignored stale transport error (configuration changed)");
+                              }
                 else:
                   - http_request.get:
                       url: !lambda |-
@@ -97,13 +109,20 @@ script:
                       capture_response: false
                       on_response:
                         then:
-                          - lambda: id(svitlobot_set_state)->execute(response->status_code, response->duration_ms);
+                          - lambda: |-
+                              if (id(svitlobot).config_epoch() == id(svitlobot_request_revision)) {
+                                id(svitlobot_set_state)->execute(response->status_code, response->duration_ms);
+                              } else {
+                                ESP_LOGW("SvitloBot", "Ignored stale response (configuration changed)");
+                              }
                       on_error:
                         then:
-                          - script.execute:
-                              id: svitlobot_set_state
-                              code: -1
-                              duration: 0
+                          - lambda: |-
+                              if (id(svitlobot).config_epoch() == id(svitlobot_request_revision)) {
+                                id(svitlobot_set_state)->execute(-1, 0);
+                              } else {
+                                ESP_LOGW("SvitloBot", "Ignored stale transport error (configuration changed)");
+                              }
             - component.update: svitlobot_errors
             - script.execute: after_svitlobot_request
             - script.wait: after_svitlobot_request
@@ -271,6 +290,7 @@ select:
       sorting_weight: 4
     set_action:
       - lambda: |-
+          id(svitlobot).invalidate_config();
           id(svitlobot_send_errors) = -1;
           id(svitlobot_had_success) = false;
           id(svitlobot_status).publish_state(false);
