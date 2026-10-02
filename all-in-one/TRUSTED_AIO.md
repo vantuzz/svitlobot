@@ -41,3 +41,24 @@ HTTP redirects are disabled for this trusted AIO profile, including Custom URL. 
 5. Optionally clear the old Direct key after successful relay testing; retain a copy outside the ESP if you may use Direct again.
 
 If the configured relay is down, SvitloBot delivery fails rather than exposing the WAN IP by falling back to Direct. A separate router WAN fallback can still expose the WAN IP to Healthchecks; this firmware does not alter router routing policy.
+
+## Runtime controls and safe diagnostics
+
+- **Heartbeat Interval** (AIO parent device): persistent ESPHome template number, default **70 s**, selectable **70–300 s** in steps of 5 s. It changes the single Shadow scheduler for SvitloBot, HealthCheck and Custom URL. The current Shadow sleep may finish with the old interval; the next cycle uses the new one. No firmware rebuild or additional task is required for ordinary interval changes. Set the Healthchecks.io check period and grace time to match your chosen cadence (e.g. period 2 min and grace 5 min with a 70 s heartbeat).
+- **Connection Mode** now includes `Paused` as a third option: it suppresses **only** SvitloBot requests, never falls back to Direct, and leaves HealthCheck and Custom URL running. `Paused` was appended after Direct and Custom Relay so previously stored ESPHome select indices remain valid across OTA.
+- **Request Count** (diagnostic): counts actual SvitloBot HTTP attempts since boot, including repeated attempts with an unchanged response code; this is not persisted to NVS.
+- **Delivery State** (diagnostic): summarizes the result or a locally skipped request (e.g. Paused, Invalid Relay URL, Waiting for Wi-Fi, HTTP 400) without publishing credential values. Response Code and Delivery Errors remain independent entities.
+- ESPHome 2026.5.1 templates accept `std::string` for request URLs, while request header callbacks require `const char *`. Relay authorization is backed by persistent string storage until ESPHome copies it into its request header value. Direct, Healthchecks and Custom URL callbacks return URL strings by value.
+- ESP-IDF's HTTP client may log the **entire URL** for non-2xx responses. The trusted C3 profile suppresses the `http_request.idf` logger tag because Direct and Healthchecks URLs carry credentials. Service-level status codes remain visible. Do not enable the suppressed logger while those secrets are provisioned.
+
+### Privacy limitation retained for compatibility
+
+Runtime password-mode ESPHome text entities are masked in the editor but still expose their actual state to authorized HA clients and may appear in other authenticated WebUI/API surfaces. Recorder exclusions are still recommended. A true write-only credential migration needs a separate staged design and should **not** be combined with this scheduling/HTTP fix, because an incorrect migration could overwrite existing NVS values.
+
+### Acceptance checklist before deploying
+
+1. Compile the ESP32-C3 source in the separate **private** build repository with ESPHome 2026.5.1 and the existing four build-time secrets. The public fork and this PR contain source code only.
+2. Verify that an OTA install preserves Wi-Fi/API/OTA credentials and restores Direct or Custom Relay by index; `Paused` is the third option.
+3. In HA, set `Paused`: no SvitloBot requests, while Healthchecks continues. Then select Custom Relay and verify Request Count increases and Delivery State/Response Code reflect each result.
+4. Change Heartbeat Interval to 90 s, reboot normally and confirm it restores; restore 70 s afterwards. Check Healthchecks period/grace settings before selecting long intervals.
+5. Verify there is no credential value in emitted service diagnostics or ESP-IDF error logs. Never post token/key or personalized firmware publicly.
