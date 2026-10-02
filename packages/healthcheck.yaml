@@ -62,7 +62,11 @@ script:
                     - lambda: |-
                         int acknowledgment = 0;
                         if (response->status_code == 200) {
-                          if (body == "OK") acknowledgment = 1;
+                          // ESPHome invokes on_response even after a read error/timeout.
+                          // Never accept a truncated prefix such as "OK" from a longer body.
+                          if (!response->is_read_complete() ||
+                              response->get_bytes_read() != body.size()) acknowledgment = 4;
+                          else if (body == "OK") acknowledgment = 1;
                           else if (body == "OK (not found)") acknowledgment = 2;
                           else if (body == "OK (rate limited)") acknowledgment = 3;
                           else acknowledgment = 4;  // Missing, truncated, or unknown response.
