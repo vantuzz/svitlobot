@@ -70,3 +70,27 @@ text:
 select:
   - id: !extend svitlobot_connection_mode
     device_id: svitlobot_device
+
+# Runtime AIO cadence (all three services). Restored at setup before Shadow starts.
+# Shadow's public setter changes the next sleep interval; an already-running sleep
+# may still complete using the previous value. No extra tasks are created.
+number:
+  - platform: template
+    name: "Heartbeat Interval"
+    id: aio_heartbeat_interval
+    optimistic: true
+    restore_value: true
+    initial_value: 70
+    min_value: 70
+    max_value: 300
+    step: 5
+    mode: box
+    unit_of_measurement: "s"
+    entity_category: config
+    icon: mdi:timer-cog-outline
+    on_value:
+      then:
+        - lambda: |-
+            const auto seconds = static_cast<uint32_t>(x);
+            id(svitlobot).set_shadow_interval(seconds);
+            ESP_LOGI("AIO", "Heartbeat interval set to %u s for all services", seconds);
