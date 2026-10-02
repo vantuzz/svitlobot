@@ -46,7 +46,7 @@ script:
             - script.wait: before_healthcheck_request
             - http_request.get:
                 url: !lambda |-
-                  return ((std::string) "https://hc-ping.com/" + id(healthcheck_key).state).c_str();
+                  return std::string("https://hc-ping.com/") + id(healthcheck_key).state;
                 capture_response: false
                 on_response:
                   then:
