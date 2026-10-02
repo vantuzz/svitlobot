@@ -5,7 +5,7 @@ import logging
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import ota, script
-from esphome.const import CONF_ID, CONF_INTERVAL, CONF_PRIORITY, CONF_STARTUP_DELAY
+from esphome.const import CONF_ID, CONF_INTERVAL, CONF_STARTUP_DELAY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -17,8 +17,7 @@ AUTO_LOAD = ["shadow"]
 
 MULTI_CONF = True
 
-logging.info("Load Shadow component https://github.com/andrewjswan/esphome-components")
-logging.info("If you like the Shadow component, you can support it with a star ⭐ on GitHub.")
+logging.info("Load local, main-loop Shadow component (MIT adaptation of Andrew J. Swan)")
 
 shadow_ns = cg.esphome_ns.namespace("shadow")
 SHADOW_ = shadow_ns.class_("Shadow", cg.Component)
@@ -34,7 +33,6 @@ CONFIG_SCHEMA = cv.All(
                 default="0s",
             ): cv.positive_time_period_seconds,
             cv.Optional(CONF_INTERVAL, default="60s"): cv.positive_time_period_seconds,
-            cv.Optional(CONF_PRIORITY, default=1): cv.int_range(1, 10),
             cv.Required(CONF_SCRIPT_ID): cv.use_id(script),
         },
     ).extend(cv.COMPONENT_SCHEMA),
@@ -54,6 +52,5 @@ async def to_code(config) -> None:
 
     cg.add(var.set_startup_delay(config[CONF_STARTUP_DELAY]))
     cg.add(var.set_shadow_interval(config[CONF_INTERVAL]))
-    cg.add(var.set_shadow_priority(config[CONF_PRIORITY]))
 
     await cg.register_component(var, config)
