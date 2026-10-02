@@ -46,7 +46,7 @@ script:
             - script.wait: before_custom_url_request
             - http_request.get:
                 url: !lambda |-
-                  return ((std::string) id(custom_url).state).c_str();
+                  return id(custom_url).state;
                 capture_response: false
                 on_response:
                   then:

@@ -12,6 +12,12 @@ globals:
     type: int
     restore_value: no
     initial_value: '-1'
+  # 0=not evaluated, 1=accepted, 2=not found, 3=rate limited, 4=unexpected body.
+  # Local diagnostics only; never contains UUID or server response text.
+  - id: healthcheck_ack_result
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 web_server:
   version: 3
@@ -46,17 +52,34 @@ script:
             - script.wait: before_healthcheck_request
             - http_request.get:
                 url: !lambda |-
-                  return ((std::string) "https://hc-ping.com/" + id(healthcheck_key).state).c_str();
-                capture_response: false
+                  return std::string("https://hc-ping.com/") + id(healthcheck_key).state;
+                # HTTP 200 alone is NOT confirmation: unknown UUIDs and rate-limited
+                # pings also return 200. Only the exact body "OK" is accepted.
+                capture_response: true
+                max_response_buffer_size: 64
                 on_response:
                   then:
-                    - lambda: id(healthcheck_set_state)->execute(response->status_code, response->duration_ms);
+                    - lambda: |-
+                        int acknowledgment = 0;
+                        if (response->status_code == 200) {
+                          // ESPHome invokes on_response even after a read error/timeout.
+                          // Never accept a truncated prefix such as "OK" from a longer body.
+                          if (!response->is_read_complete() ||
+                              response->get_bytes_read() != body.size()) acknowledgment = 4;
+                          else if (body == "OK") acknowledgment = 1;
+                          else if (body == "OK (not found)") acknowledgment = 2;
+                          else if (body == "OK (rate limited)") acknowledgment = 3;
+                          else acknowledgment = 4;  // Missing, truncated, or unknown response.
+                        }
+                        id(healthcheck_set_state)->execute(
+                            response->status_code, response->duration_ms, acknowledgment);
                 on_error:
                   then:
                     - script.execute:
                         id: healthcheck_set_state
                         code: -1
                         duration: 0
+                        acknowledgment: 0
             - component.update: healthcheck_errors
             - script.execute: after_healthcheck_request
             - script.wait: after_healthcheck_request
@@ -71,10 +94,12 @@ script:
     parameters:
       code: int
       duration: int
+      acknowledgment: int
     then:
       - script.execute: before_healthcheck_state
       - script.wait: before_healthcheck_state
       - lambda: |-
+          id(healthcheck_ack_result) = acknowledgment;
           if (code > 0) {
             id(healthcheck_response_code).publish_state(std::to_string(code));
           } else {
@@ -88,13 +113,15 @@ script:
             id(healthcheck_response_duration).publish_state(NAN);
           }
 
-          if (code == 200) {
-            ESP_LOGI("HealthCheck", "Send status - success");
+          if (code == 200 && acknowledgment == 1) {
+            ESP_LOGI("HealthCheck", "Ping acknowledged");
             id(healthcheck_status).publish_state(true);
             id(healthcheck_send_errors) = 0;
           } else {
-            if (code > 0) {
-              ESP_LOGE("HealthCheck", "Send status - not success with response code: %d", code);
+            if (code == 200) {
+              ESP_LOGW("HealthCheck", "HTTP 200 without confirmed ping acknowledgment (category %d)", acknowledgment);
+            } else if (code > 0) {
+              ESP_LOGE("HealthCheck", "Ping failed with HTTP status %d", code);
             }
             id(healthcheck_status).publish_state(false);
             id(healthcheck_send_errors) = id(healthcheck_send_errors) < 0 ? 1 : std::max(1, ++id(healthcheck_send_errors));

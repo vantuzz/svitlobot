@@ -55,5 +55,14 @@
 > [!IMPORTANT]
 > [**Svitlo**Bot - Документація](https://andrewjswan.github.io/svitlobot/)
 
+## Експериментальний Trusted AIO для ESP32-C3
+
+Персоналізована збірка **Trusted AIO 3.5.61** доступна як вихідний код лише у feature-гілці; це не офіційний реліз upstream і не універсальна прошивка для всіх плат.
+
+- [Посібник користувача: функції, налаштування, безпека, OTA та результати hardware smoke test](all-in-one/TRUSTED_AIO.md).
+- [Developer / AI maintenance contract: карта коду, інваріанти, CI, перевірки, обмеження й roadmap](all-in-one/TRUSTED_AIO_DEVELOPMENT.md).
+
+Персоналізовані binaries збираються тільки приватно; PR залишається Draft до завершення додаткових випробувань.
+
 ## 🤝 Підтримка та розвиток
 Якщо вам подобається проект, ви можете підтримати його зіркою ⭐ на GitHub.

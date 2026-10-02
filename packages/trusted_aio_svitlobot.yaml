@@ -12,6 +12,14 @@ globals:
     type: int
     restore_value: no
     initial_value: '-1'
+  - id: svitlobot_attempt_count
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: svitlobot_request_revision
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
 
 web_server:
   version: 3
@@ -58,6 +66,11 @@ script:
           then:
             - script.execute: before_svitlobot_request
             - script.wait: before_svitlobot_request
+            - lambda: |-
+                id(svitlobot_request_revision) = id(svitlobot).config_epoch();
+                ++id(svitlobot_attempt_count);
+                id(svitlobot_request_count).publish_state(id(svitlobot_attempt_count));
+                id(svitlobot_delivery_state).publish_state("Sending");
             - if:
                 condition:
                   lambda: 'return id(svitlobot_connection_mode).state == "Custom Relay";'
@@ -67,31 +80,49 @@ script:
                         return id(svitlobot_relay_url).state;
                       request_headers:
                         Authorization: !lambda |-
-                          return ((std::string) "Bearer " + id(svitlobot_relay_token).state).c_str();
+                          // ESPHome 2026.5.1 needs const char* for templated headers.
+                          // Keep the backing string alive until it is copied into Header.
+                          static std::string authorization;
+                          authorization = std::string("Bearer ") + id(svitlobot_relay_token).state;
+                          return authorization.c_str();
                       capture_response: false
                       on_response:
                         then:
-                          - lambda: id(svitlobot_set_state)->execute(response->status_code, response->duration_ms);
+                          - lambda: |-
+                              if (id(svitlobot).config_epoch() == id(svitlobot_request_revision)) {
+                                id(svitlobot_set_state)->execute(response->status_code, response->duration_ms);
+                              } else {
+                                ESP_LOGW("SvitloBot", "Ignored stale response (configuration changed)");
+                              }
                       on_error:
                         then:
-                          - script.execute:
-                              id: svitlobot_set_state
-                              code: -1
-                              duration: 0
+                          - lambda: |-
+                              if (id(svitlobot).config_epoch() == id(svitlobot_request_revision)) {
+                                id(svitlobot_set_state)->execute(-1, 0);
+                              } else {
+                                ESP_LOGW("SvitloBot", "Ignored stale transport error (configuration changed)");
+                              }
                 else:
                   - http_request.get:
                       url: !lambda |-
-                        return ((std::string) "https://api.svitlobot.in.ua/channelPing?channel_key=" + id(svitlobot_key).state).c_str();
+                        return std::string("https://api.svitlobot.in.ua/channelPing?channel_key=") + id(svitlobot_key).state;
                       capture_response: false
                       on_response:
                         then:
-                          - lambda: id(svitlobot_set_state)->execute(response->status_code, response->duration_ms);
+                          - lambda: |-
+                              if (id(svitlobot).config_epoch() == id(svitlobot_request_revision)) {
+                                id(svitlobot_set_state)->execute(response->status_code, response->duration_ms);
+                              } else {
+                                ESP_LOGW("SvitloBot", "Ignored stale response (configuration changed)");
+                              }
                       on_error:
                         then:
-                          - script.execute:
-                              id: svitlobot_set_state
-                              code: -1
-                              duration: 0
+                          - lambda: |-
+                              if (id(svitlobot).config_epoch() == id(svitlobot_request_revision)) {
+                                id(svitlobot_set_state)->execute(-1, 0);
+                              } else {
+                                ESP_LOGW("SvitloBot", "Ignored stale transport error (configuration changed)");
+                              }
             - component.update: svitlobot_errors
             - script.execute: after_svitlobot_request
             - script.wait: after_svitlobot_request
@@ -124,10 +155,12 @@ script:
           }
 
           if (code == 200) {
+            id(svitlobot_delivery_state).publish_state("Success");
             ESP_LOGI("SvitloBot", "Send status - success");
             id(svitlobot_status).publish_state(true);
             id(svitlobot_send_errors) = 0;
           } else {
+            id(svitlobot_delivery_state).publish_state(code > 0 ? ("HTTP " + std::to_string(code)) : "Transport error");
             if (code > 0) {
               ESP_LOGE("SvitloBot", "Send status - not success with response code: %d", code);
             }
@@ -157,6 +190,34 @@ script:
   - id: without_svitlobot_request
     then:
       - logger.log: "Without request..."
+      - lambda: |-
+          // Publish only diagnostic categories: never echo URL, key or token.
+          if (!id(esp_wifi).is_connected()) {
+            id(svitlobot_delivery_state).publish_state("Waiting for Wi-Fi");
+          } else if (id(svitlobot_connection_mode).state == "Paused") {
+            id(svitlobot_delivery_state).publish_state("Paused");
+          } else if (id(svitlobot_connection_mode).state == "Direct") {
+            id(svitlobot_delivery_state).publish_state(
+                (!id(svitlobot_key).has_state() || id(svitlobot_key).state.length() <= 3)
+                    ? "Direct key missing" : "Skipped by policy");
+          } else if (id(svitlobot_connection_mode).state == "Custom Relay") {
+            const auto &url = id(svitlobot_relay_url).state;
+            const bool valid_url = id(svitlobot_relay_url).has_state() &&
+                                   url.rfind("https://", 0) == 0 && url.size() > 8 &&
+                                   url.find('?') == std::string::npos &&
+                                   url.find('#') == std::string::npos &&
+                                   url.find('@') == std::string::npos;
+            if (!valid_url) {
+              id(svitlobot_delivery_state).publish_state("Invalid Relay URL");
+            } else if (!id(svitlobot_relay_token).has_state() ||
+                       id(svitlobot_relay_token).state.length() < 16) {
+              id(svitlobot_delivery_state).publish_state("Relay token missing/short");
+            } else {
+              id(svitlobot_delivery_state).publish_state("Skipped by policy");
+            }
+          } else {
+            id(svitlobot_delivery_state).publish_state("Invalid mode");
+          }
 
   - id: before_svitlobot_state
     then:
@@ -219,6 +280,7 @@ select:
     options:
       - Direct
       - Custom Relay
+      - Paused  # Append only: ESPHome restores saved select by option index.
     initial_option: Direct
     restore_value: true
     optimistic: true
@@ -228,11 +290,13 @@ select:
       sorting_weight: 4
     set_action:
       - lambda: |-
+          id(svitlobot).invalidate_config();
           id(svitlobot_send_errors) = -1;
           id(svitlobot_had_success) = false;
           id(svitlobot_status).publish_state(false);
           id(svitlobot_response_code).publish_state("");
           id(svitlobot_response_duration).publish_state(NAN);
+          id(svitlobot_delivery_state).publish_state("Waiting for next heartbeat");
 
 binary_sensor:
   - platform: template
@@ -244,6 +308,17 @@ binary_sensor:
       sorting_weight: 1
 
 sensor:
+  - platform: template
+    name: "Request Count"
+    id: svitlobot_request_count
+    device_id: svitlobot_device
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    icon: mdi:counter
+    web_server:
+      sorting_group_id: svitlobot_group
+      sorting_weight: 12
+
   - platform: template
     name: "Delivery Errors"
     id: svitlobot_errors
@@ -278,6 +353,16 @@ sensor:
       sorting_weight: 11
 
 text_sensor:
+  - platform: template
+    name: "Delivery State"
+    id: svitlobot_delivery_state
+    device_id: svitlobot_device
+    entity_category: diagnostic
+    icon: mdi:information-outline
+    web_server:
+      sorting_group_id: svitlobot_group
+      sorting_weight: 9
+
   - platform: template
     name: "Response Code"
     id: svitlobot_response_code

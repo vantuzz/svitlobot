@@ -1,3 +1,7 @@
+substitutions:
+  # Personal C3 profile only; marks the runtime-control/HTTP fix OTA revision.
+  project_version: "3.5.61"
+
 # Trusted ESP32-C3 AIO runtime diagnostics.
 # HTTP redirects are disabled for every outbound HTTP request in this profile.
 http_request:
@@ -32,7 +36,11 @@ binary_sensor:
     lambda: |-
       return id(esp_wifi).is_connected() &&
              id(svitlobot_had_success) && id(healthcheck_had_success) &&
-             id(svitlobot_send_errors) > 10 && id(healthcheck_send_errors) > 10;
+             id(svitlobot_send_errors) > 10 && id(healthcheck_send_errors) > 10 &&
+             // A remote HTTP rejection (including HTTP 200 without HC acceptance)
+             // is not evidence that restarting the ESP will fix delivery.
+             id(svitlobot_delivery_state).state == "Transport error" &&
+             id(healthcheck_response_code).state == "---";
 
 # Remove inherited automatic reboot triggers for the other two services.
 # The trusted SvitloBot package omits its reboot trigger directly.
@@ -47,26 +55,173 @@ text:
   - id: !extend svitlobot_key
     on_value:
       - lambda: |-
+          // Mark any in-flight callback from the previous credentials stale.
+          id(svitlobot).invalidate_config();
           id(svitlobot_had_success) = false;
           id(svitlobot_send_errors) = -1;
+          id(svitlobot_status).publish_state(false);
+          id(svitlobot_response_code).publish_state("");
+          id(svitlobot_response_duration).publish_state(NAN);
+          id(svitlobot_delivery_state).publish_state("Waiting for next heartbeat");
   - id: !extend svitlobot_relay_url
     device_id: svitlobot_device
     on_value:
       - lambda: |-
+          // Mark any in-flight callback from the previous credentials stale.
+          id(svitlobot).invalidate_config();
           id(svitlobot_had_success) = false;
           id(svitlobot_send_errors) = -1;
+          id(svitlobot_status).publish_state(false);
+          id(svitlobot_response_code).publish_state("");
+          id(svitlobot_response_duration).publish_state(NAN);
+          id(svitlobot_delivery_state).publish_state("Waiting for next heartbeat");
   - id: !extend svitlobot_relay_token
     device_id: svitlobot_device
     on_value:
       - lambda: |-
+          // Mark any in-flight callback from the previous credentials stale.
+          id(svitlobot).invalidate_config();
           id(svitlobot_had_success) = false;
           id(svitlobot_send_errors) = -1;
+          id(svitlobot_status).publish_state(false);
+          id(svitlobot_response_code).publish_state("");
+          id(svitlobot_response_duration).publish_state(NAN);
+          id(svitlobot_delivery_state).publish_state("Waiting for next heartbeat");
   - id: !extend healthcheck_key
     on_value:
       - lambda: |-
           id(healthcheck_had_success) = false;
           id(healthcheck_send_errors) = -1;
+          id(healthcheck_ack_result) = 0;
+          id(healthcheck_status).publish_state(false);
+          id(healthcheck_response_code).publish_state("");
+          id(healthcheck_response_duration).publish_state(NAN);
 
 select:
   - id: !extend svitlobot_connection_mode
     device_id: svitlobot_device
+
+# Runtime AIO cadence (all three services). Restored at setup before Shadow starts.
+# The local main-loop scheduler re-arms its named timeout when changed;
+# an already-running network request is never interrupted. No extra tasks exist.
+number:
+  - platform: template
+    name: "Heartbeat Interval"
+    id: aio_heartbeat_interval
+    optimistic: true
+    restore_value: true
+    initial_value: 70
+    min_value: 70
+    max_value: 300
+    step: 5
+    mode: box
+    unit_of_measurement: "s"
+    entity_category: config
+    icon: mdi:timer-cog-outline
+    on_value:
+      then:
+        - lambda: |-
+            const auto seconds = static_cast<uint32_t>(x);
+            id(svitlobot).set_shadow_interval(seconds);
+            ESP_LOGI("AIO", "Heartbeat interval set to %u s for all services", seconds);
+
+# Time is supplied by the encrypted Home Assistant API. Heartbeat never waits
+# for it: until HA synchronizes the clock, display uptime rather than a fake
+# wall-clock timestamp. Use explicit UTC regardless of the build runner timezone.
+time:
+  - platform: homeassistant
+    id: aio_clock
+    timezone: UTC
+
+# Record last COMPLETED HTTP attempt, not a scheduled/skipped ping. Existing
+# set_state scripts have already published response_code/status when these hooks run.
+# No URL, key, token or response body is published.
+script:
+  - id: !extend after_svitlobot_state
+    then:
+      - lambda: |-
+          // A new accepted response re-establishes success independently of
+          // binary_sensor.on_state de-duplication.
+          if (id(svitlobot_status).state) id(svitlobot_had_success) = true;
+          auto clock = id(aio_clock).utcnow();
+          const std::string when = clock.is_valid()
+              ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
+              : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
+          const auto &code = id(svitlobot_response_code).state;
+          const std::string outcome = id(svitlobot_status).state
+              ? "OK (HTTP 200)"
+              : (code.empty() || code == "---" ? "FAIL (transport)"
+                                             : (std::string("FAIL (HTTP ") + code + ")"));
+          id(svitlobot_last_request).publish_state(when + " | " + outcome);
+
+  - id: !extend after_healthcheck_state
+    then:
+      - lambda: |-
+          if (id(healthcheck_status).state) id(healthcheck_had_success) = true;
+          auto clock = id(aio_clock).utcnow();
+          const std::string when = clock.is_valid()
+              ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
+              : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
+          const auto &code = id(healthcheck_response_code).state;
+          std::string outcome;
+          if (id(healthcheck_status).state) {
+            outcome = "OK (HTTP 200: acknowledged)";
+          } else if (code.empty() || code == "---") {
+            outcome = "FAIL (transport)";
+          } else if (code == "200") {
+            const int ack = id(healthcheck_ack_result);
+            const char *reason = ack == 2 ? "check not found"
+                               : ack == 3 ? "rate limited"
+                                          : "unrecognized acknowledgment";
+            outcome = std::string("FAIL (HTTP 200: ") + reason + ")";
+          } else {
+            outcome = std::string("FAIL (HTTP ") + code + ")";
+          }
+          id(healthcheck_last_request).publish_state(when + " | " + outcome);
+
+  - id: !extend after_custom_url_state
+    then:
+      - lambda: |-
+          auto clock = id(aio_clock).utcnow();
+          const std::string when = clock.is_valid()
+              ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
+              : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
+          const auto &code = id(custom_url_response_code).state;
+          const std::string outcome = id(custom_url_status).state
+              ? "OK (HTTP 200)"
+              : (code.empty() || code == "---" ? "FAIL (transport)"
+                                             : (std::string("FAIL (HTTP ") + code + ")"));
+          id(custom_url_last_request).publish_state(when + " | " + outcome);
+
+# These fields update even when consecutive HTTP responses have the same code.
+# They are grouped with their service in the authenticated ESPHome WebUI and HA.
+text_sensor:
+  - platform: template
+    name: "Last Request"
+    id: svitlobot_last_request
+    device_id: svitlobot_device
+    entity_category: diagnostic
+    icon: mdi:clock-check-outline
+    web_server:
+      sorting_group_id: svitlobot_group
+      sorting_weight: 13
+
+  - platform: template
+    name: "Last Request"
+    id: healthcheck_last_request
+    device_id: healthcheck_device
+    entity_category: diagnostic
+    icon: mdi:clock-check-outline
+    web_server:
+      sorting_group_id: healthcheck_group
+      sorting_weight: 12
+
+  - platform: template
+    name: "Last Request"
+    id: custom_url_last_request
+    device_id: custom_url_device
+    entity_category: diagnostic
+    icon: mdi:clock-check-outline
+    web_server:
+      sorting_group_id: custom_url_group
+      sorting_weight: 12
