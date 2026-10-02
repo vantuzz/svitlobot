@@ -1,6 +1,6 @@
 # Trusted ESP32-C3 All-in-One
 
-Only `all-in-one/aio_esp32c3.yaml` uses the trusted common, SvitloBot and delivery packages. The runtime-control and authenticated WebUI OTA profile is version 3.5.59. The shared HealthCheck package receives the safe URL-string-lifetime fix and strict server acknowledgment verification; this also changes HealthCheck success semantics for other profiles built from this feature branch. Custom URL only receives the safe URL-string-lifetime fix. The public `main` branch is unaffected.
+Only `all-in-one/aio_esp32c3.yaml` uses the trusted common, SvitloBot and delivery packages. The runtime-control and authenticated WebUI OTA profile is version 3.5.60. The shared HealthCheck package receives the safe URL-string-lifetime fix and strict server acknowledgment verification; this also changes HealthCheck success semantics for other profiles built from this feature branch. Custom URL only receives the safe URL-string-lifetime fix. The public `main` branch is unaffected.
 
 ## Build-time GitHub Actions Secrets
 
@@ -82,9 +82,17 @@ The PRIVATE repository's `Build / All-In-One` workflow is scoped to ESP32-C3 and
 
 ESPHome WebUI uses HTTP Basic authentication on port 80: the WebUI password can be observed on an untrusted LAN segment. Restrict device access to a trusted LAN/VPN, never expose port 80 to WAN, prefer native OTA when security of the local network is uncertain, and leave the existing native OTA password enabled. CI verifies the newly built partition layout, **not** the partition table installed on the physical device or NVS migration; inspect the device's first deployment path and perform a post-install heartbeat/relay test. CI status is not a guarantee of runtime availability or network privacy.
 
-### Review notes for version 3.5.59
+### Review notes for version 3.5.60
 
 - Security: WebUI log streaming now starts **OFF** and the Show Log switch is opt-in (`ALWAYS_OFF`). ESP-IDF HTTP URL logging remains suppressed regardless of that switch. A compromised authenticated HA/WebUI client can still read current runtime password-mode entity state; the compatible write-only credential migration is deferred.
 - WebUI OTA is an authenticated HTTP endpoint, **not HTTPS**; HTTP Basic credentials traverse the local network. Keep the device WebUI LAN/VPN-only and prefer native challenge-response OTA whenever the LAN cannot be trusted. Do not forward WebUI port 80 from WAN.
 - Only the private CI's `READY FOR OTA` artifact should be used for routine WebUI updates. First switch from a previous version with web OTA disabled via native OTA. The CI's compiled OTA partition sizes cannot prove the layout installed on the physical device; review that first migration explicitly. CI does not confirm live relay/heartbeat function or preservation of NVS until hardware smoke testing.
 - Shared packages still expose an optional user-configurable Custom URL, including HTTP URLs. Never put credentials in a plaintext HTTP URL, and restrict who can change this entity. Rejecting historic HTTP URLs automatically would be a potentially breaking migration and is not done here.
+
+## Follow-up independent review: 3.5.60
+
+- The ESP32-C3 profile now vendors the MIT-licensed Shadow component locally (`components/shadow`), adapted from the upstream pinned revision. The worker no longer deletes its FreeRTOS task on `OTA_STARTED`: it suspends NEW heartbeat starts and resumes on `OTA_ABORT`/`OTA_ERROR`. An in-flight HTTP request can still finish; OTA runtime behavior needs actual device verification.
+- Shadow's interval and pause/configuration epoch are atomic. Worker task allocation is checked and `start()` does not create duplicates. Changing SvitloBot credentials or Connection Mode increments the epoch; stale SvitloBot response/error callbacks are dropped instead of incorrectly confirming changed settings.
+- Direct Key, Relay URL and Relay Token updates explicitly reset SvitloBot Status, error counter, Response Code and success history. The accepted next request can re-arm success without relying on same-value binary sensor callbacks.
+- The PRIVATE C3 CI source preflight reads active scalar settings rather than accepting a misleading `verify_ssl: false # verify_ssl: true` substring. Additional targeted regression tests cover the Shadow OTA, atomic fields and callback epoch wiring.
+- **Review boundary:** an atomic interval does not by itself prove the ESPHome runtime entities are fully thread-safe when changed via WebUI/HA while a Shadow-script HTTP action executes. The external-task architecture still needs real concurrency/hardware stress testing or a larger immutable-snapshot / main-loop publication redesign. A green build/READY job is not a substitute for that test. Keep all PRs Draft and do not treat this revision as approved for automatic deployment.
