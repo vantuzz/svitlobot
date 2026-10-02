@@ -1,6 +1,6 @@
 substitutions:
   # Personal C3 profile only; marks the runtime-control/HTTP fix OTA revision.
-  project_version: "3.5.59"
+  project_version: "3.5.60"
 
 # Trusted ESP32-C3 AIO runtime diagnostics.
 # HTTP redirects are disabled for every outbound HTTP request in this profile.
@@ -55,20 +55,38 @@ text:
   - id: !extend svitlobot_key
     on_value:
       - lambda: |-
+          // Mark any in-flight callback from the previous credentials stale.
+          id(svitlobot).invalidate_config();
           id(svitlobot_had_success) = false;
           id(svitlobot_send_errors) = -1;
+          id(svitlobot_status).publish_state(false);
+          id(svitlobot_response_code).publish_state("");
+          id(svitlobot_response_duration).publish_state(NAN);
+          id(svitlobot_delivery_state).publish_state("Waiting for next heartbeat");
   - id: !extend svitlobot_relay_url
     device_id: svitlobot_device
     on_value:
       - lambda: |-
+          // Mark any in-flight callback from the previous credentials stale.
+          id(svitlobot).invalidate_config();
           id(svitlobot_had_success) = false;
           id(svitlobot_send_errors) = -1;
+          id(svitlobot_status).publish_state(false);
+          id(svitlobot_response_code).publish_state("");
+          id(svitlobot_response_duration).publish_state(NAN);
+          id(svitlobot_delivery_state).publish_state("Waiting for next heartbeat");
   - id: !extend svitlobot_relay_token
     device_id: svitlobot_device
     on_value:
       - lambda: |-
+          // Mark any in-flight callback from the previous credentials stale.
+          id(svitlobot).invalidate_config();
           id(svitlobot_had_success) = false;
           id(svitlobot_send_errors) = -1;
+          id(svitlobot_status).publish_state(false);
+          id(svitlobot_response_code).publish_state("");
+          id(svitlobot_response_duration).publish_state(NAN);
+          id(svitlobot_delivery_state).publish_state("Waiting for next heartbeat");
   - id: !extend healthcheck_key
     on_value:
       - lambda: |-
@@ -122,6 +140,9 @@ script:
   - id: !extend after_svitlobot_state
     then:
       - lambda: |-
+          // A new accepted response re-establishes success independently of
+          // binary_sensor.on_state de-duplication.
+          if (id(svitlobot_status).state) id(svitlobot_had_success) = true;
           auto clock = id(aio_clock).utcnow();
           const std::string when = clock.is_valid()
               ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -136,6 +157,7 @@ script:
   - id: !extend after_healthcheck_state
     then:
       - lambda: |-
+          if (id(healthcheck_status).state) id(healthcheck_had_success) = true;
           auto clock = id(aio_clock).utcnow();
           const std::string when = clock.is_valid()
               ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
