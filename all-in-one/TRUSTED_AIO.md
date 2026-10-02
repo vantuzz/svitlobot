@@ -1,6 +1,6 @@
 # Trusted ESP32-C3 All-in-One
 
-Only `all-in-one/aio_esp32c3.yaml` uses the trusted common, SvitloBot and delivery packages. Other firmware profiles and `main` are unaffected.
+Only `all-in-one/aio_esp32c3.yaml` uses the trusted common, SvitloBot and delivery packages. The runtime-control profile is version 3.5.58. The shared Healthcheck/Custom URL packages also receive a safe URL-string-lifetime fix on this feature branch; their behavior otherwise remains unchanged. The public `main` branch is unaffected.
 
 ## Build-time GitHub Actions Secrets
 
@@ -45,7 +45,7 @@ If the configured relay is down, SvitloBot delivery fails rather than exposing t
 ## Runtime controls and safe diagnostics
 
 - **Heartbeat Interval** (AIO parent device): persistent ESPHome template number, default **70 s**, selectable **70–300 s** in steps of 5 s. It changes the single Shadow scheduler for SvitloBot, HealthCheck and Custom URL. The current Shadow sleep may finish with the old interval; the next cycle uses the new one. No firmware rebuild or additional task is required for ordinary interval changes. Set the Healthchecks.io check period and grace time to match your chosen cadence (e.g. period 2 min and grace 5 min with a 70 s heartbeat).
-- **Connection Mode** now includes `Paused` as a third option: it suppresses **only** SvitloBot requests, never falls back to Direct, and leaves HealthCheck and Custom URL running. `Paused` was appended after Direct and Custom Relay so previously stored ESPHome select indices remain valid across OTA.
+- **Connection Mode** now includes `Paused` as a third option: it suppresses **new** SvitloBot requests (an in-flight request may still finish), never falls back to Direct, and leaves HealthCheck and Custom URL running. `Paused` was appended after Direct and Custom Relay so previously stored ESPHome select indices remain valid across OTA.
 - **Request Count** (diagnostic): counts actual SvitloBot HTTP attempts since boot, including repeated attempts with an unchanged response code; this is not persisted to NVS.
 - **Delivery State** (diagnostic): summarizes the result or a locally skipped request (e.g. Paused, Invalid Relay URL, Waiting for Wi-Fi, HTTP 400) without publishing credential values. Response Code and Delivery Errors remain independent entities.
 - ESPHome 2026.5.1 templates accept `std::string` for request URLs, while request header callbacks require `const char *`. Relay authorization is backed by persistent string storage until ESPHome copies it into its request header value. Direct, Healthchecks and Custom URL callbacks return URL strings by value.
