@@ -1,6 +1,6 @@
 substitutions:
   # Personal C3 profile only; marks the runtime-control/HTTP fix OTA revision.
-  project_version: "3.5.60"
+  project_version: "3.5.61"
 
 # Trusted ESP32-C3 AIO runtime diagnostics.
 # HTTP redirects are disabled for every outbound HTTP request in this profile.
@@ -102,8 +102,8 @@ select:
     device_id: svitlobot_device
 
 # Runtime AIO cadence (all three services). Restored at setup before Shadow starts.
-# Shadow's public setter changes the next sleep interval; an already-running sleep
-# may still complete using the previous value. No extra tasks are created.
+# The local main-loop scheduler re-arms its named timeout when changed;
+# an already-running network request is never interrupted. No extra tasks exist.
 number:
   - platform: template
     name: "Heartbeat Interval"
