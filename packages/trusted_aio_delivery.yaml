@@ -36,7 +36,11 @@ binary_sensor:
     lambda: |-
       return id(esp_wifi).is_connected() &&
              id(svitlobot_had_success) && id(healthcheck_had_success) &&
-             id(svitlobot_send_errors) > 10 && id(healthcheck_send_errors) > 10;
+             id(svitlobot_send_errors) > 10 && id(healthcheck_send_errors) > 10 &&
+             // A remote HTTP rejection (including HTTP 200 without HC acceptance)
+             // is not evidence that restarting the ESP will fix delivery.
+             id(svitlobot_delivery_state).state == "Transport error" &&
+             id(healthcheck_response_code).state == "---";
 
 # Remove inherited automatic reboot triggers for the other two services.
 # The trusted SvitloBot package omits its reboot trigger directly.
@@ -70,6 +74,10 @@ text:
       - lambda: |-
           id(healthcheck_had_success) = false;
           id(healthcheck_send_errors) = -1;
+          id(healthcheck_ack_result) = 0;
+          id(healthcheck_status).publish_state(false);
+          id(healthcheck_response_code).publish_state("");
+          id(healthcheck_response_duration).publish_state(NAN);
 
 select:
   - id: !extend svitlobot_connection_mode
@@ -133,10 +141,20 @@ script:
               ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
               : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
           const auto &code = id(healthcheck_response_code).state;
-          const std::string outcome = id(healthcheck_status).state
-              ? "OK (HTTP 200)"
-              : (code.empty() || code == "---" ? "FAIL (transport)"
-                                             : (std::string("FAIL (HTTP ") + code + ")"));
+          std::string outcome;
+          if (id(healthcheck_status).state) {
+            outcome = "OK (HTTP 200: acknowledged)";
+          } else if (code.empty() || code == "---") {
+            outcome = "FAIL (transport)";
+          } else if (code == "200") {
+            const int ack = id(healthcheck_ack_result);
+            const char *reason = ack == 2 ? "check not found"
+                               : ack == 3 ? "rate limited"
+                                          : "unrecognized acknowledgment";
+            outcome = std::string("FAIL (HTTP 200: ") + reason + ")";
+          } else {
+            outcome = std::string("FAIL (HTTP ") + code + ")";
+          }
           id(healthcheck_last_request).publish_state(when + " | " + outcome);
 
   - id: !extend after_custom_url_state
