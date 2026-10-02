@@ -1,5 +1,5 @@
 substitutions:
-  heartbeat_interval: "55"  # in seconds
+  heartbeat_interval: "70"  # safe default for all AIO services; HA can change it at runtime
 
 esphome:
   name: "${name}"
@@ -27,6 +27,11 @@ ota:
 
 logger:
   level: INFO
+  logs:
+    # The ESP-IDF HTTP client logs full URLs on non-2xx responses. Direct and
+    # Healthchecks URLs contain credentials, so suppress that component tag.
+    # Service-specific result codes remain available via entities and logs.
+    http_request.idf: NONE
 
 mdns:
   disabled: false
