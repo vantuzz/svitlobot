@@ -1,6 +1,6 @@
 # Trusted ESP32-C3 All-in-One
 
-Only `all-in-one/aio_esp32c3.yaml` uses the trusted common, SvitloBot and delivery packages. The runtime-control profile is version 3.5.58. The shared HealthCheck package receives the safe URL-string-lifetime fix and strict server acknowledgment verification; this also changes HealthCheck success semantics for other profiles built from this feature branch. Custom URL only receives the safe URL-string-lifetime fix. The public `main` branch is unaffected.
+Only `all-in-one/aio_esp32c3.yaml` uses the trusted common, SvitloBot and delivery packages. The runtime-control and authenticated WebUI OTA profile is version 3.5.59. The shared HealthCheck package receives the safe URL-string-lifetime fix and strict server acknowledgment verification; this also changes HealthCheck success semantics for other profiles built from this feature branch. Custom URL only receives the safe URL-string-lifetime fix. The public `main` branch is unaffected.
 
 ## Build-time GitHub Actions Secrets
 
@@ -73,3 +73,11 @@ Runtime password-mode ESPHome text entities are masked in the editor but still e
 - Keep the shared Shadow cadence at 70 seconds by default (approximately 0.86 pings/minute per enabled check), and configure Healthchecks Period 2 minutes / Grace 3 minutes manually. If the runtime heartbeat interval changes, adjust the remote check accordingly.
 - No immediate retries in this change: a new scheduled heartbeat already follows, and retrying a rate-limited or unknown check is counterproductive. The existing request timeout remains 15 seconds. Healthchecks.io recommends bounded retries in general, but this small persistent device does not need a separate retry scheduler for the initial release.
 - Canonical local UUID syntax validation is deferred: this version preserves restored credentials and reports server rejection, rather than silently skipping a stored value. A future validation may be added with an explicit non-secret configuration diagnostic after private acceptance testing.
+
+## Private CI release gate and WebUI OTA
+
+The PRIVATE repository's `Build / All-In-One` workflow is scoped to ESP32-C3 and gates its installable artifact on source checks, real ESPHome 2026.5.1 compilation, actual OTA/factory SHA-256 against the ESPHome manifest, ESP32-C3 image header, and OTA image size against **both** compiled OTA slots from `partitions.bin`. Its unit tests use synthetic fixtures. The final `READY FOR OTA` job appears only after successful verification and private artifact upload. The package intentionally includes **only** `*.ota.bin`, safe metadata/checksums and installation instructions: factory images are not for WebUI OTA. Store credentials only in private Actions Secrets; the binary itself embeds build-time credentials, so do not expose artifacts outside the private repository.
+
+`web_server.ota: false` was removed so the existing `ota: - platform: web_server` enables authenticated OTA in the regular local WebUI. **The current device may still run an older firmware with WebUI OTA disabled**: install this version the first time via the existing native ESPHome OTA channel, preserving flash/NVS; subsequent releases can use authenticated local WebUI and the `*.ota.bin` file. Never upload a `*.factory.bin` through WebUI.
+
+ESPHome WebUI uses HTTP Basic authentication on port 80: the WebUI password can be observed on an untrusted LAN segment. Restrict device access to a trusted LAN/VPN, never expose port 80 to WAN, prefer native OTA when security of the local network is uncertain, and leave the existing native OTA password enabled. CI verifies the newly built partition layout, **not** the partition table installed on the physical device or NVS migration; inspect the device's first deployment path and perform a post-install heartbeat/relay test. CI status is not a guarantee of runtime availability or network privacy.
