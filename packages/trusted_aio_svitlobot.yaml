@@ -291,6 +291,7 @@ sensor:
   - platform: template
     name: "Request Count"
     id: svitlobot_request_count
+    device_id: svitlobot_device
     accuracy_decimals: 0
     entity_category: diagnostic
     icon: mdi:counter
@@ -335,6 +336,7 @@ text_sensor:
   - platform: template
     name: "Delivery State"
     id: svitlobot_delivery_state
+    device_id: svitlobot_device
     entity_category: diagnostic
     icon: mdi:information-outline
     web_server:
