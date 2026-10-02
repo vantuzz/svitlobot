@@ -51,7 +51,7 @@ void Shadow::shadow_function(void *params) {
   for (;;) {
     if (owner->suspended_.load(std::memory_order_acquire)) {
       // OTA may fail or abort. Keep the task, wait until resumed, and ensure
-      // nobody can call vTaskDelete(nullptr) to delete the OTA callback task.
+      // the OTA callback task is never deleted through a null handle.
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       continue;
     }
