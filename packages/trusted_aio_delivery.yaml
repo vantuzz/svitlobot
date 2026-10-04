@@ -16,14 +16,27 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
-  # Zero is the boot-local "no attempt yet" sentinel. Unsigned subtraction
-  # handles millis() wraparound when manual requests enforce a minimum gap.
-  - id: aio_svitlobot_last_attempt_ms
+  # Last COMPLETED attempt (not launch); bool distinguishes first attempt from
+  # millis() == 0. Unsigned subtraction is safe across uint32_t wraparound.
+  - id: aio_svitlobot_last_completed_ms
     type: uint32_t
     restore_value: no
     initial_value: '0'
-  - id: aio_healthcheck_last_attempt_ms
+  - id: aio_svitlobot_attempt_seen
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: aio_healthcheck_last_completed_ms
     type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: aio_healthcheck_attempt_seen
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  # 0=automatic/idle, 1=manual SvitloBot, 2=manual HealthCheck.
+  - id: aio_manual_target
+    type: int
     restore_value: no
     initial_value: '0'
 
@@ -150,17 +163,81 @@ time:
       then:
         - logger.log: "AIO: SNTP clock synchronized"
 
-# Timestamp real attempt starts (scheduled and manual) without exposing URLs.
-# These inherited hooks run only after the ordinary per-service preflight.
+# These inherited hooks run after each real HTTP attempt, whether successful
+# or not, for both scheduled and manual service scripts. No secret is published.
 script:
-  - id: !extend before_svitlobot_request
+  - id: !extend after_svitlobot_request
     then:
       - lambda: |-
-          id(aio_svitlobot_last_attempt_ms) = millis() | 1U;
-  - id: !extend before_healthcheck_request
+          id(aio_svitlobot_last_completed_ms) = millis();
+          id(aio_svitlobot_attempt_seen) = true;
+          if (id(aio_manual_target) == 1) {
+            id(aio_svitlobot_manual_state).publish_state("Completed (see Last Request)");
+          }
+  - id: !extend after_healthcheck_request
     then:
       - lambda: |-
-          id(aio_healthcheck_last_attempt_ms) = millis() | 1U;
+          id(aio_healthcheck_last_completed_ms) = millis();
+          id(aio_healthcheck_attempt_seen) = true;
+          if (id(aio_manual_target) == 2) {
+            id(aio_healthcheck_manual_state).publish_state("Completed (see Last Request)");
+          }
+  - id: !extend after_svitlobot_state
+    then:
+      - lambda: |-
+          // A new accepted response re-establishes success independently of
+          // binary_sensor.on_state de-duplication.
+          if (id(svitlobot_status).state) id(svitlobot_had_success) = true;
+          auto clock = id(aio_clock).utcnow();
+          const std::string when = clock.is_valid()
+              ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
+              : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
+          const auto &code = id(svitlobot_response_code).state;
+          const std::string outcome = id(svitlobot_status).state
+              ? "OK (HTTP 200)"
+              : (code.empty() || code == "---" ? "FAIL (transport)"
+                                             : (std::string("FAIL (HTTP ") + code + ")"));
+          id(svitlobot_last_request).publish_state(when + " | " + outcome);
+
+  - id: !extend after_healthcheck_state
+    then:
+      - lambda: |-
+          if (id(healthcheck_status).state) id(healthcheck_had_success) = true;
+          auto clock = id(aio_clock).utcnow();
+          const std::string when = clock.is_valid()
+              ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
+              : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
+          const auto &code = id(healthcheck_response_code).state;
+          std::string outcome;
+          if (id(healthcheck_status).state) {
+            outcome = "OK (HTTP 200: acknowledged)";
+          } else if (code.empty() || code == "---") {
+            outcome = "FAIL (transport)";
+          } else if (code == "200") {
+            const int ack = id(healthcheck_ack_result);
+            const char *reason = ack == 2 ? "check not found"
+                               : ack == 3 ? "rate limited"
+                                          : "unrecognized acknowledgment";
+            outcome = std::string("FAIL (HTTP 200: ") + reason + ")";
+          } else {
+            outcome = std::string("FAIL (HTTP ") + code + ")";
+          }
+          id(healthcheck_last_request).publish_state(when + " | " + outcome);
+
+  - id: !extend after_custom_url_state
+    then:
+      - lambda: |-
+          auto clock = id(aio_clock).utcnow();
+          const std::string when = clock.is_valid()
+              ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
+              : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
+          const auto &code = id(custom_url_response_code).state;
+          const std::string outcome = id(custom_url_status).state
+              ? "OK (HTTP 200)"
+              : (code.empty() || code == "---" ? "FAIL (transport)"
+                                             : (std::string("FAIL (HTTP ") + code + ")"));
+          id(custom_url_last_request).publish_state(when + " | " + outcome);
+
 
 # Two authenticated local/HA manual controls. They reuse the existing service
 # scripts and their validation/result handlers. Shared Shadow gate prevents
@@ -245,65 +322,6 @@ button:
             - script.execute: healthcheck_ping
             - script.wait: healthcheck_ping
             - lambda: 'id(svitlobot).end_manual();'
-
-# Record last COMPLETED HTTP attempt, not a scheduled/skipped ping. Existing
-# set_state scripts have already published response_code/status when these hooks run.
-# No URL, key, token or response body is published.
-  - id: !extend after_svitlobot_state
-    then:
-      - lambda: |-
-          // A new accepted response re-establishes success independently of
-          // binary_sensor.on_state de-duplication.
-          if (id(svitlobot_status).state) id(svitlobot_had_success) = true;
-          auto clock = id(aio_clock).utcnow();
-          const std::string when = clock.is_valid()
-              ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
-              : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
-          const auto &code = id(svitlobot_response_code).state;
-          const std::string outcome = id(svitlobot_status).state
-              ? "OK (HTTP 200)"
-              : (code.empty() || code == "---" ? "FAIL (transport)"
-                                             : (std::string("FAIL (HTTP ") + code + ")"));
-          id(svitlobot_last_request).publish_state(when + " | " + outcome);
-
-  - id: !extend after_healthcheck_state
-    then:
-      - lambda: |-
-          if (id(healthcheck_status).state) id(healthcheck_had_success) = true;
-          auto clock = id(aio_clock).utcnow();
-          const std::string when = clock.is_valid()
-              ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
-              : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
-          const auto &code = id(healthcheck_response_code).state;
-          std::string outcome;
-          if (id(healthcheck_status).state) {
-            outcome = "OK (HTTP 200: acknowledged)";
-          } else if (code.empty() || code == "---") {
-            outcome = "FAIL (transport)";
-          } else if (code == "200") {
-            const int ack = id(healthcheck_ack_result);
-            const char *reason = ack == 2 ? "check not found"
-                               : ack == 3 ? "rate limited"
-                                          : "unrecognized acknowledgment";
-            outcome = std::string("FAIL (HTTP 200: ") + reason + ")";
-          } else {
-            outcome = std::string("FAIL (HTTP ") + code + ")";
-          }
-          id(healthcheck_last_request).publish_state(when + " | " + outcome);
-
-  - id: !extend after_custom_url_state
-    then:
-      - lambda: |-
-          auto clock = id(aio_clock).utcnow();
-          const std::string when = clock.is_valid()
-              ? clock.strftime("%Y-%m-%d %H:%M:%S UTC")
-              : (std::string("uptime ") + std::to_string(millis() / 1000) + "s (clock not synced)");
-          const auto &code = id(custom_url_response_code).state;
-          const std::string outcome = id(custom_url_status).state
-              ? "OK (HTTP 200)"
-              : (code.empty() || code == "---" ? "FAIL (transport)"
-                                             : (std::string("FAIL (HTTP ") + code + ")"));
-          id(custom_url_last_request).publish_state(when + " | " + outcome);
 
 # These fields update even when consecutive HTTP responses have the same code.
 # They are grouped with their service in the authenticated ESPHome WebUI and HA.
