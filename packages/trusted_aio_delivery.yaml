@@ -1,6 +1,8 @@
 substitutions:
   # Personal C3 profile only; marks the runtime-control/HTTP fix OTA revision.
   project_version: "3.5.62"
+  # The shared HC package uses this optional guard ONLY for Trusted C3.
+  trusted_aio_healthcheck_gate: '!id(aio_healthcheck_skip_current_auto)'
 
 # Trusted ESP32-C3 AIO runtime diagnostics.
 # HTTP redirects are disabled for every outbound HTTP request in this profile.
@@ -39,6 +41,24 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'
+  # At most the NEXT automatic tick for the manually pinged service is skipped
+  # if that tick would duplicate a recent manual delivery. Other services run.
+  - id: aio_svitlobot_manual_recent
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: aio_healthcheck_manual_recent
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: aio_svitlobot_skip_current_auto
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: aio_healthcheck_skip_current_auto
+    type: bool
+    restore_value: no
+    initial_value: 'false'
 
 binary_sensor:
   - id: !extend svitlobot_status
@@ -166,12 +186,33 @@ time:
 # These inherited hooks run after each real HTTP attempt, whether successful
 # or not, for both scheduled and manual service scripts. No secret is published.
 script:
+  - id: !extend before_svitlobot_ping
+    then:
+      - lambda: |-
+          id(aio_svitlobot_skip_current_auto) = false;
+          if (id(aio_manual_target) == 0 && id(aio_svitlobot_manual_recent)) {
+            id(aio_svitlobot_manual_recent) = false;
+            id(aio_svitlobot_skip_current_auto) =
+                uint32_t(millis() - id(aio_svitlobot_last_completed_ms)) <
+                static_cast<uint32_t>(id(aio_heartbeat_interval).state) * 1000U;
+          }
+  - id: !extend before_healthcheck_ping
+    then:
+      - lambda: |-
+          id(aio_healthcheck_skip_current_auto) = false;
+          if (id(aio_manual_target) == 0 && id(aio_healthcheck_manual_recent)) {
+            id(aio_healthcheck_manual_recent) = false;
+            id(aio_healthcheck_skip_current_auto) =
+                uint32_t(millis() - id(aio_healthcheck_last_completed_ms)) <
+                static_cast<uint32_t>(id(aio_heartbeat_interval).state) * 1000U;
+          }
   - id: !extend after_svitlobot_request
     then:
       - lambda: |-
           id(aio_svitlobot_last_completed_ms) = millis();
           id(aio_svitlobot_attempt_seen) = true;
           if (id(aio_manual_target) == 1) {
+            id(aio_svitlobot_manual_recent) = true;
             id(aio_svitlobot_manual_state).publish_state("Completed (see Last Request)");
           }
   - id: !extend after_healthcheck_request
@@ -180,6 +221,7 @@ script:
           id(aio_healthcheck_last_completed_ms) = millis();
           id(aio_healthcheck_attempt_seen) = true;
           if (id(aio_manual_target) == 2) {
+            id(aio_healthcheck_manual_recent) = true;
             id(aio_healthcheck_manual_state).publish_state("Completed (see Last Request)");
           }
   - id: !extend after_svitlobot_state
@@ -241,8 +283,8 @@ script:
 
 # Two authenticated local/HA manual controls. They reuse existing service
 # scripts/validation and serialize on the same Shadow gate as the main cycle.
-# The successful manual request RE-ARMS the one common automatic timer; check
-# HC Period/Grace against this deliberate rescheduling in hardware tests.
+# Manual sends leave the original shared timer intact; on the next tick
+# only the just-pinged service is skipped when too recent. All others continue.
 # Full heartbeat interval cooldown is measured after the last HTTP completion;
 # additional backoff applies after SvitloBot 429 / Healthchecks rate limitation.
 button:
