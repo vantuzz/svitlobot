@@ -249,7 +249,6 @@ button:
 # Record last COMPLETED HTTP attempt, not a scheduled/skipped ping. Existing
 # set_state scripts have already published response_code/status when these hooks run.
 # No URL, key, token or response body is published.
-script:
   - id: !extend after_svitlobot_state
     then:
       - lambda: |-
