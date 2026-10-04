@@ -1,4 +1,4 @@
-# Trusted AIO 3.5.61 — developer and AI maintenance contract
+# Trusted AIO 3.5.62 — developer and AI maintenance contract
 
 **Scope:** personalized ESP32-C3 All-in-One profile in the `trusted-aio-runtime-controls` feature branch. This is a working-context document for a new AI session or a human maintainer, NOT a request for autonomous deployments. Read the [Ukrainian operator guide](TRUSTED_AIO.md) first. Keep both documents in sync with code changes. The two PRs are currently Draft; the generic upstream and other board profiles must not be described as having this firmware.
 
@@ -7,7 +7,7 @@
 - Public/source fork: `vantuzz/svitlobot`, feature branch `trusted-aio-runtime-controls`, Draft PR #1 targeting `trusted-aio`. Source code and non-secret docs live here. Never publish a personalized firmware artifact.
 - Private build repo: `vantuzz/svitlobot-private-build`, same feature branch, Draft PR #1. Four build secrets, fail-closed C3 CI, host tests and personalized artifacts live here. Changes to shared C3 firmware source/docs must be mirrored between repos; private-only workflow/test changes must remain private.
 - Build target: `all-in-one/aio_esp32c3.yaml`, ESP32-C3, ESP-IDF, ESPHome **2026.5.1**. This is *not* a generic release of every board/profile.
-- Effective personalized project version is **3.5.61**, set by the last included `packages/trusted_aio_delivery.yaml`. A base substitution of `3.5.57` also exists in `trusted_aio_svitlobot.yaml`; do not mistake that base default for the compiled C3 profile. Build manifest, running HTTP User-Agent and private validator must agree.
+- Effective source candidate project version is **3.5.62**, set by the last included `packages/trusted_aio_delivery.yaml`. A base substitution of `3.5.57` also exists in `trusted_aio_svitlobot.yaml`. The physically tested installation is **3.5.61** until a new 3.5.62 private CI/OTA/hardware signoff. Build manifest, running HTTP User-Agent and private validator must agree for the *same* build.
 - Historical validated private run for the first hardware installation: `37065148538`; OTA image SHA-256 `85343D8E8362AA856ACBE348467257FD668953DEBB99EF259282FA1F05DBA2A2` (1,167,824 bytes), run's ZIP digest `e74a643578c1d1333b0651a1b98bd50e29bc19b40024a3d0195b6bef3943d52f`. These identify **one** built artifact; a later rebuild must be revalidated from its own manifest and hashes. Artifact links expire.
 - Single physical-device smoke test (2026-10-03) passed; 24-hour stability observation was started but its outcome **has not yet been reported**. Do not claim a long-duration test or all fault-injection cases have passed. See ``7–8` below.
 
@@ -18,7 +18,7 @@
 | `all-in-one/aio_esp32c3.yaml` | The only reviewed personalized C3 package composition, in include order |
 | `packages/trusted_aio_common.yaml` | Native encrypted HA API, native + WebUI OTA, local authenticated WebUI, secrets, base scripts/diagnostics, log suppression |
 | `packages/trusted_aio_svitlobot.yaml` | Direct / Custom Relay / Paused, runtime Key/URL/Token, status, request attempt counter, response and epoch checks |
-| `packages/trusted_aio_delivery.yaml` | Effective 3.5.61 version, persistent interval, after-request UTC diagnostics, error/reset policy, invalidation hooks |
+| `packages/trusted_aio_delivery.yaml` | Effective 3.5.62 version, persistent interval, independent SNTP, manual Send Now buttons, after-request UTC diagnostics, error/reset policy, invalidation hooks |
 | `packages/healthcheck.yaml` | Direct Healthchecks HTTPS, full-body exact acknowledgment classifier, per-service status |
 | `packages/custom_url.yaml` | Optional GET third service and per-service status |
 | `packages/esp32.yaml` | Local Shadow hookup; 5-second startup delay, templated initial interval |
@@ -63,6 +63,7 @@ Direct key, Relay URL and Relay Token are optimistic template texts with `restor
 - `script_->execute()`, runtime text/select reads, and entity publication run from the ESPHome main-loop context, not an auxiliary FreeRTOS task. Keep runtime code serialized in this context or provide a separately reviewed snapshot/concurrency design.
 - OTA callback changes the atomic suspension flag only: `OTA_STARTED` and `OTA_COMPLETED` block NEW launches; `OTA_ABORT` and `OTA_ERROR` resume at the next ordinary tick. An already running HTTP request can finish. Do not delete tasks, mutate ESPHome scheduler state or force network abort from asynchronous OTA callbacks.
 - Atomic `config_epoch` protects against older SvitloBot callbacks overwriting status after key/URL/token/mode changes. Request revision capture and equality check are required in **both** Direct and Relay on-response/on-error paths.
+- **3.5.62 manual request gate:** `Shadow::begin_manual()` is accepted only after its first scheduled tick, when not OTA-suspended, the composite `site_ping` is idle and no other manual request owns the gate. Two Trusted-C3-only template buttons run `svitlobot_ping` or `healthcheck_ping` through the original service scripts and `script.wait`; `end_manual()` then re-arms the single existing scheduled timer. Scheduled launches skip while the manual gate is held. SvitloBot `Paused` is honored. Each manual button checks a minimum 30-second gap from that service's last *actual* HTTP attempt; after SvitloBot HTTP 429 or Healthchecks rate limitation use full Heartbeat Interval. No queue, instant retry, second scheduler, third Custom URL button, mode fallback or implicit key reset.
 - **Known tradeoff:** HTTP actions are synchronous on the main loop. Three enabled sequential 15-second requests can delay main-loop responsiveness for roughly 45 s plus other waits/overhead during network failure. Network-outage/TLS stall/watchdog/HA-WebUI responsiveness are still untested live. Do not present this as solved by a green compile.
 
 ## 4. Persistence, diagnostics and time
@@ -72,7 +73,7 @@ Direct key, Relay URL and Relay Token are optimistic template texts with `restor
 | Direct Key, Relay URL, Relay Token, mode, Heartbeat Interval, Healthcheck Key, Custom URL (ESPHome NVS preferences) | Request Count, delivery error counters, previous-success flags, response timing/state and Last Request |
 
 - `Last Request` is emitted on each **completed attempt** via after-state hooks, even if consecutive codes are identical. It is *not* a scheduled tick timestamp; skipped Paused cycles do not overwrite it.
-- UTC time comes from encrypted Home Assistant API; no time sync must NOT stop heartbeat. Use `uptime Ns (clock not synced)` until valid; do not label this as an HTTP failure.
+- 3.5.62 UTC time is supplied independently by SNTP (`0/1/2.pool.ntp.org`) using IoT DNS plus outbound UDP/123; HA API is still available for administration but no longer a time dependency. Until synchronized, preserve `uptime Ns (clock not synced)`, never mark heartbeat failed solely for absent time. Previously installed 3.5.61 used Home Assistant time.
 - `Delivery State` retains semantically distinct cases (Success, Paused, Invalid Relay URL, HTTP code, Transport error). HTTP 429 must remain an HTTP failure, not a connectivity/ESP reboot reason.
 - `Request Count` increments only before a valid SvitloBot HTTP attempt, not on Paused/skipped cycles; restart resets it.
 - `Restart Recommended` is an informational binary sensor, **not an auto reboot**. It requires Wi-Fi, successful SvitloBot AND Healthchecks at least once in the current boot/current config, more than 10 consecutive failures for BOTH, last SvitloBot state `Transport error` and HC response code `---`. Remote rejection/rate limit is insufficient. Automatic error-driven reboot triggers were removed for trusted C3.
@@ -120,7 +121,7 @@ These observations are a functional smoke test. The first 429's origin (Worker v
 
 ## 8. Pending validation and safer roadmap
 
-**Next non-destructive field checks:** after a full day collect uptime/reset reason, Wi-Fi signal, SvitloBot/HC Last Request + Delivery Errors, Restart Recommended, any 429/other failures from redacted Worker logs, and verify user-facing last-contact. Distinguish an intentional power-cycle from an unexpected reboot.
+**Next non-destructive field checks:** after a full day collect uptime/reset reason, Wi-Fi signal, SvitloBot/HC Last Request + Delivery Errors, Restart Recommended, any 429/other failures from redacted Worker logs, and verify user-facing last-contact. Distinguish an intentional power-cycle from an unexpected reboot. After a reviewed 3.5.62 OTA, test SNTP with HA disconnected (DNS/UDP/123 allowed), both Send Now buttons (including Paused, active heartbeat, rapid double-click, 429 cooldown and OTA gate), matching Last Request and counter updates, and restored runtime settings. **No live 3.5.62 results are claimed here.**
 
 **Pending controlled fault tests (only with owner approval):** Wi-Fi outage / DNS unavailable / TLS stall and watchdog/HA/WebUI responsiveness; credential/URL change during an in-flight request; simulated HC `OK (not found)` / `OK (rate limited)` / truncated body (prefer synthetic fixtures to disturbing production checks); Custom URL success and failure; OTA abort/error recovery with safe tooling, never intentionally power-cut an in-progress flash write. Check HTTP rejection never triggers auto-reboot. A 24-hour observation alone does not prove these cases.
 
