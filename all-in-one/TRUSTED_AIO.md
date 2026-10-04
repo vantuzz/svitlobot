@@ -1,43 +1,126 @@
-# Trusted ESP32-C3 All-in-One
+# Trusted AIO 3.5.62 — посібник користувача (ESP32-C3)
 
-Only `all-in-one/aio_esp32c3.yaml` uses the trusted common, SvitloBot and delivery packages. Other firmware profiles and `main` are unaffected.
+> **Статус на 2026-10-04:** 3.5.62 — зміни вихідного коду-кандидата (SNTP і ручні кнопки), НЕ підтверджений на фізичному ESP32-C3 реліз. Раніше встановлена/протестована на обладнанні версія — **3.5.61**. PR залишається Draft; тривалий тест стабільності не вважати завершеним без звіту. Не встановлюйте чужий персоналізований binary.
+>
+> Для AI та розробника: [технічний контракт / карта коду / тест-план](TRUSTED_AIO_DEVELOPMENT.md).
 
-## Build-time GitHub Actions Secrets
+## 1. Що це і де застосовується
 
-Compile this personalized firmware **only in a private repository or local environment**. The GitHub workflow refuses the ESP32-C3 build in a public repository: the compiled API encryption key and OTA/WebUI/fallback-AP credentials must not be exposed in downloadable public Actions artifacts. Keep the public `trusted-aio` branch source-only. Add these four Actions secrets to the **private** build repository before a manual `Build / All-In-One` run:
+Trusted AIO об'єднує три незалежні канали в одному ESP32-C3:
 
-- `API_ENCRYPTION_KEY`: ESPHome API Noise key; base64 encoding of 32 random bytes.
-- `OTA_PASSWORD`: native ESPHome OTA password.
-- `WEB_PASSWORD`: WebUI password (username: `svitlobot`).
-- `FALLBACK_AP_PASSWORD`: Wi-Fi recovery AP password (8+ characters).
+- **SvitloBot:** повідомляє про наявність живлення через Direct або власний HTTPS Relay.
+- **Healthchecks.io:** окремий прямий HTTPS heartbeat; режим `Paused` для SvitloBot не зупиняє його.
+- **Custom URL:** необов'язковий третій HTTP(S) GET, лише якщо налаштований.
 
-The workflow creates a temporary `all-in-one/secrets.yaml` for the ESP32-C3 job only. No genuine secret belongs in git. Keep copies of the secrets, especially the API key for Home Assistant.
+Цей профіль збирається із `all-in-one/aio_esp32c3.yaml` і спеціальних `packages/trusted_aio_*.yaml`. Не переносіть його поведінку автоматично на інші AIO-плати або upstream. Платформа збірки: **ESPHome 2026.5.1**, ESP-IDF, ESP32-C3. Версія нового вихідного профілю: **3.5.62** (для ще не встановленого OTA). Значення `ESPHome Version` у WebUI показує версію платформи, а не профілю. Після складання й встановлення 3.5.62 `User-Agent` міститиме `esphome/all-in-one (3.5.62)`; нині встановлена 3.5.61 залишається без змін.
 
-## Runtime configuration
+## 2. Як працює передавання
 
-`SvitloBot > Connection Mode` is a persistent select:
+`Heartbeat Interval` є спільним планувальником для трьох сервісів; їхні HTTP-запити запускаються послідовно, а результат кожного обробляється незалежно. Перша спроба планується після стартової затримки 5 секунд; фактичний час відправлення залежить від Wi-Fi та тривалості дій. Новий цикл не запускається паралельно з попереднім.
 
-- `Direct` (default): needs `SvitloBot > Key`, sends HTTPS GET to the fixed SvitloBot API endpoint. This retains the existing key entity/restore state for OTA migration.
-- `Custom Relay`: needs `SvitloBot > Relay URL` and `Relay Token`. URL must start with `https://`, have no query, fragment or embedded userinfo. Token must be at least 16 characters. ESP sends GET to the configured URL, with `Authorization: Bearer <token>`. It never includes the SvitloBot key in the relay request. Relay failures **never** fall back to Direct.
+| Канал / режим | Куди йде запит | Умови |
+| --- | --- | --- |
+| SvitloBot — `Direct` | HTTPS GET до офіційного API SvitloBot із збереженим `Key` | Режим за замовчуванням; пряме підключення |
+| SvitloBot — `Custom Relay` | HTTPS GET до налаштованого `Relay URL` | Заголовок `Authorization: Bearer <token>`; Direct Key НЕ надсилається Relay |
+| SvitloBot — `Paused` | Нові запити SvitloBot не надсилаються | Запит, який уже виконувався під час перемикання, може завершитися |
+| HealthCheck | Прямий HTTPS GET до `hc-ping.com` | Незалежно від режиму SvitloBot |
+| Custom URL | GET до заданого URL | Опціонально; історична сумісність допускає HTTP, тому не кладіть секрети в незахищений URL |
 
-Relay URL and token are runtime text entities with `restore_value: true` and `mode: password`: neither is embedded in the repository or compiled firmware. The original SvitloBot key can be cleared after the relay is verified. ESPHome's password display mode masks the UI but is **not** encryption-at-rest or guaranteed redaction from authenticated WebUI JSON; restrict LAN and WebUI access.
+**Відмови Relay не перемикають пристрій назад на Direct.** Це навмисно: резервний шлях міг би розкрити пряме мережеве підключення. Перемикання вручну доступне через WebUI або Home Assistant. Успіх HTTP 200 від Relay підтверджує лише відповідь Relay; для підтвердження наскрізної доставки звіряйте час сигналу в самому SvitloBot.
 
-Both connection modes share SvitloBot Status, Delivery Errors and Response Duration. Stock ESPHome WebUI may display all config fields simultaneously; the selected mode, not visibility of a field, determines which values are used.
+## 3. Налаштування без перекомпіляції
 
-Healthchecks remains a separate direct outbound HTTPS channel. Home Assistant uses encrypted native API on the LAN.
+У локальному WebUI використовуйте `Show All` для конфігураційних полів або відповідні сутності через зашифрований Home Assistant API.
 
-## Recovery diagnostics
+| Поле | Значення / поведінка | Збереження |
+| --- | --- | --- |
+| `Connection Mode` | `Direct` / `Custom Relay` / `Paused` | Так |
+| `SvitloBot Key` | Ключ для `Direct`; не очищайте, якщо хочете зберегти резервний режим | Так |
+| `Relay URL` | Повний `https://.../ping` (або інший повний шлях вашого Relay); без `?`, `#`, `@` | Так |
+| `Relay Token` | Не менше 16 символів, до 128; передається як Bearer token | Так |
+| `Heartbeat Interval` | 70–300 секунд, крок 5; типове значення 70 | Так |
+| HealthCheck Key | UUID/ключ вашої перевірки | Так |
+| Custom URL | Адреса необов'язкового GET | Так |
+| `Request Count` | Кількість фактичних спроб SvitloBot від останнього запуску | Ні |
+| `Send Now` у SvitloBot | Один ручний запит вибраним Direct/Relay шляхом; `Paused` забороняє запит | Кнопка, без збереженого стану |
+| `Send Now` у HealthCheck | Один ручний запит Healthchecks незалежно від режиму SvitloBot | Кнопка, без збереженого стану |
 
-This profile disables automatic reboots driven by SvitloBot, Healthchecks and Custom URL Delivery Errors. `Restart Recommended` becomes ON only when Wi-Fi is connected, both SvitloBot and Healthchecks have returned HTTP 200 in the current boot (with their current credentials/mode), and **both** have accumulated more than ten consecutive failed requests. This is a recommendation only: there is no automatic restart. The manual Restart button remains.
+Парольний режим поля **лише приховує його у редакторі**, а не шифрує значення в NVS і не робить його недоступним авторизованим HA/WebUI клієнтам. Не надсилайте скриншоти відкритих секретів, не публікуйте резервну копію flash.
 
-HTTP redirects are disabled for this trusted AIO profile, including Custom URL. HTTPS server certificates are verified.
+**Ручне відправлення (з 3.5.62):** кнопки доступні в автентифікованому WebUI та через HA API. Вони викликають ті самі перевірки налаштувань, HTTP-обробку, лічильники й Last Request, що і звичайний цикл. Не запускають Custom URL, не обходять Paused і не перемикають Relay на Direct. Якщо Wi-Fi відсутній, іде інший запит, триває OTA або ще не минув **повний Heartbeat Interval після ЗАВЕРШЕННЯ** попередньої фактичної HTTP-спроби відповідної служби — натискання пропускається. Після SvitloBot HTTP 429 або Healthchecks rate-limit ручний backoff — `max(2 × Heartbeat Interval, 120 секунд)`. Доданий окремий `Manual Request State` для обох служб: `Accepted`, `Cooldown`, `Busy / OTA`, `Paused`, `No Wi-Fi`, `Skipped (preflight)` або `Completed (see Last Request)`. **Ручний запуск не переносить спільний автоматичний таймер.** Якщо наступний плановий цикл надто близько після ручної спроби, лише щойно відправлена служба пропустить один повтор; інші (зокрема Healthchecks і Custom URL) продовжують роботу за своїм звичайним розкладом. Налаштування Healthchecks Period/Grace все одно має враховувати фактичний мережевий timeout. Нові ручні спроби не є автоматичними retry.
 
-## Provisioning order
+### Налаштування Healthchecks.io
 
-1. Bring the trusted branch into a separate **private** build repository (or use a secure local checkout). Configure the four GitHub Actions secrets there and run `Build / All-In-One`; verify the ESP32-C3 build. Do not run a personalized firmware build as a public GitHub Actions artifact.
-2. Keep the current Wi-Fi working while applying the normal OTA binary; do not erase NVS. Add the API encryption key to Home Assistant when prompted.
-3. Deploy and test the Cloudflare Worker independently, with its own `SVITLOBOT_KEY` and `RELAY_TOKEN` secrets.
-4. Enter Relay URL/Token in ESPHome via authenticated WebUI or (preferably) encrypted HA API. Change Connection Mode to Custom Relay and verify an HTTP 200 plus SvitloBot heartbeat.
-5. Optionally clear the old Direct key after successful relay testing; retain a copy outside the ESP if you may use Direct again.
+Визначайте період і grace відповідно до обраного heartbeat. Для 70 с прикладом є **Period 2 min, Grace 3 min**; це орієнтир, а не встановлені прошивкою значення. Не задавайте інтервал частіше, ніж дозволяє ваш Relay / кінцевий сервіс. Немає негайних повторних запитів при 429: наступний heartbeat іде за звичайним розкладом.
 
-If the configured relay is down, SvitloBot delivery fails rather than exposing the WAN IP by falling back to Direct. A separate router WAN fallback can still expose the WAN IP to Healthchecks; this firmware does not alter router routing policy.
+## 4. Як читати діагностику
+
+- `Status` — останній підтверджений стан конкретної служби.
+- `Delivery State` — детальніший результат SvitloBot: `Success`, `Paused`, `HTTP 429`, `Transport error`, помилка вхідних налаштувань тощо.
+- `Last Request` — час і результат **останньої завершеної HTTP-спроби**, а не пропущеного циклу; оновлюється навіть коли код відповіді не змінюється.
+- Час показується в **UTC**. З 3.5.62 використовується незалежний SNTP (`0/1/2.pool.ntp.org`), без потреби підключати HA. Необхідні робочі DNS і вихідний UDP/123 з IoT-мережі. Стандартний SNTP не автентифікує сервер криптографічно; за можливості використовуйте контрольоване локальне джерело. До першої синхронізації показується `uptime Ns (clock not synced)`; це не блокує heartbeat. Залишено перевірку TLS-сертифікатів.
+- `Delivery Errors` — послідовні невдалі спроби, а не загальна кількість за весь час. `NA` можливе, коли сервіс не налаштований.
+- `Request Count` починається заново після перезавантаження.
+- `Restart Recommended` — тільки діагностична рекомендація, **не** автоматична команда. Вона вимагає попереднього успіху обох основних служб у цьому boot, Wi-Fi, понад 10 послідовних транспортних відмов у кожної. HTTP 429/400 або відхилений Healthchecks-запит самі по собі не рекомендують рестарт.
+- `Show Log` вимкнено після запуску й вмикається вручну.
+
+**Особливість Healthchecks:** HTTP 200 сам по собі не є успіхом. Прошивка приймає лише повністю прочитану точну відповідь `OK`; `OK (not found)`, `OK (rate limited)`, порожня, обрізана чи інша відповідь вважається невдачею. При успіху `Last Request` показує `OK (HTTP 200: acknowledged)`. Повне тіло відповіді та UUID у діагностику не виводяться.
+
+## 5. Безпека й доступ
+
+Персоналізовану збірку робіть **тільки приватно**. Чотири build-time GitHub Actions Secrets:
+
+| Secret | Використання |
+| --- | --- |
+| `API_ENCRYPTION_KEY` | ESPHome native API для Home Assistant |
+| `OTA_PASSWORD` | Native ESPHome OTA |
+| `WEB_PASSWORD` | Локальний WebUI; ім'я користувача `svitlobot` |
+| `FALLBACK_AP_PASSWORD` | Пароль резервної Wi-Fi точки доступу |
+
+`SvitloBot Key`, `Relay URL` і `Relay Token` — runtime-значення, не build-time секрети. Worker зберігає власні `SVITLOBOT_KEY` і `RELAY_TOKEN` окремо; прошивка не містить логіку вашого Worker.
+
+WebUI на порту 80 використовує **HTTP Basic без HTTPS**: відкривайте його лише у довіреній LAN/VPN, ніколи не публікуйте порт в Інтернет. Для чутливих параметрів віддавайте перевагу зашифрованому HA API. TLS-сертифікати вихідних HTTPS запитів перевіряються; редиректи в Trusted C3 AIO заборонено. Тег логів ESP-IDF `http_request.idf` вимкнено, оскільки помилки цієї бібліотеки можуть показувати URL із секретами. Не вмикайте цей тег без оцінки витоку.
+
+## 6. OTA, backup і відновлення
+
+1. Перед **першим** OTA перевірте фізичну таблицю розділів, сумісність образу з OTA-slot і збережіть повний локальний backup flash. Backup містить потенційні паролі/NVS: **не публікуйте**.
+2. Беріть `*.ota.bin` тільки з успішної **приватної** збірки із пройденим `READY FOR OTA`; звіряйте його SHA-256 із manifest/CI. Персоналізований binary також є секретним.
+3. Якщо стара прошивка не підтримує WebUI OTA, використайте чинний native ESPHome OTA та **пароль поточної прошивки**. OTA записує неактивний app-слот і перемикає завантаження; NVS за нормальної процедури зберігається.
+4. Починаючи з 3.5.61 доступні native OTA й автентифікований локальний WebUI OTA. Через WebUI передавайте **лише OTA image**, ніколи factory image.
+5. Після встановлення перевірте boot, режим і збережені поля, SvitloBot/Healthchecks, а для Relay — реальне оновлення сигналу на стороні SvitloBot. Не плутайте успішний upload із доведеним успішним запуском.
+6. Не запускайте `erase-flash`, factory reset, blind `write-flash` або повторний OTA у відповідь на одиничний HTTP 429.
+
+Кнопка `Restart with Factory Default Settings` — руйнівна для налаштувань, не еквівалент звичайного `Restart`. Flash backup зберігайте лише локально та захищено.
+
+## 7. Підтверджені апаратні тести (2026-10-03)
+
+Перевірено на одному ESP32-C3 Super Mini із фізично перевіреною таблицею розділів (4 MiB flash; app0/app1 по `0x1C0000`). Це **не** автоматично підтверджує іншу плату/розмітку.
+
+| Тест | Статус |
+| --- | --- |
+| Приватна CI-збірка ESPHome 2026.5.1 і валідований OTA-образ | Пройдено |
+| Перше native OTA, boot, доступність портів 80/3232 | Пройдено |
+| Збереження зміненого інтервалу 90 с після рестарту | Пройдено |
+| Повернення на 70 с без рестарту, оновлення heartbeat | Пройдено |
+| `Direct → Paused → Direct`, Healthchecks незалежний | Пройдено |
+| HTTPS Worker, авторизаційний заголовок, вихідний `User-Agent` версії 3.5.61 | Пройдено |
+| Наскрізний Relay → SvitloBot, часи сигналів відрізнялися на ~1 секунду | Пройдено |
+| `Custom Relay` збережений після рестарту; перший 429, наступний 200 за 70 с | Пройдено |
+| Healthchecks після рестарту: `OK (HTTP 200: acknowledged)`, 0 errors | Пройдено |
+| Custom URL live end-to-end; мережевий outage/TLS stall/watchdog; тривала 24-годинна стабільність | **Ще не перевірено / у процесі** |
+
+Код HTTP 429 не доводить конкретного джерела обмеження: для розрізнення Worker і upstream потрібні безпечні, безсекретні журнали.
+
+## 8. Якщо щось пішло не так
+
+| Симптом | Безпечна перша перевірка |
+| --- | --- |
+| `HTTP 429` | Не перезавантажуйте й не створюйте ручні retry; перевірте наступний цикл, Worker/upstream rate limit |
+| `HTTP 400/401/403` у Relay | Перевірте режим, повний шлях endpoint, спосіб Bearer авторизації на стороні Worker — **без публікації токена** |
+| `Relay Success`, але SvitloBot не бачить сигналу | HTTP 200 від Worker недостатньо: звірте його forwarding і час на стороні SvitloBot |
+| `HealthCheck HTTP 200: rate limited/not found` | Це невдача; перевірте конфігурацію перевірки та її правила |
+| `Last Request` показує uptime | Для 3.5.61 перевірте інтеграцію HA; для 3.5.62 перевірте DNS і UDP/123 до SNTP. Обидва випадки не блокують ping |
+| `Custom URL` = NA | Канал може бути просто не налаштований |
+| Несподіваний restart/втрата WebUI | Зафіксуйте uptime/reset reason, мережеві умови й безсекретні логи; не стирайте flash автоматично |
+
+Подальші зміни, точна карта файлів, архітектурні інваріанти й AI-інструкції — у [TRUSTED_AIO_DEVELOPMENT.md](TRUSTED_AIO_DEVELOPMENT.md).
