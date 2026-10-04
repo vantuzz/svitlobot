@@ -33,6 +33,10 @@ class Shadow final : public Component
 
   void set_script(script::Script<> *script) { this->script_ = script; }
   void set_shadow_interval(uint32_t seconds);
+  // Manual launches share the main-loop serialization gate with scheduled AIO.
+  // Call end_manual() after the selected service script has completed.
+  bool begin_manual();
+  void end_manual();
   void set_startup_delay(uint32_t seconds) { this->startup_delay_ = seconds; }
 
   // Version checks are retained as a second defense against delayed callbacks.
@@ -51,6 +55,7 @@ class Shadow final : public Component
   std::atomic<uint32_t> config_epoch_{0};
   uint32_t startup_delay_{0};
   bool first_tick_complete_{false};  // Only touched on ESPHome's main loop.
+  bool manual_active_{false};  // Also main-loop only; OTA uses suspended_ atomically.
 
   void execute_script_();
   void schedule_next_();
