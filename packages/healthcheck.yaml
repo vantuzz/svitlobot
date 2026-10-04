@@ -46,7 +46,8 @@ script:
               - lambda: |-
                   return true
                          ${"&& "~lets_ping if lets_ping is defined}
-                         ${"&& "~i_am_master if i_am_master is defined};
+                         ${"&& "~i_am_master if i_am_master is defined}
+                         ${"&& "~trusted_aio_healthcheck_gate if trusted_aio_healthcheck_gate is defined};
           then:
             - script.execute: before_healthcheck_request
             - script.wait: before_healthcheck_request
