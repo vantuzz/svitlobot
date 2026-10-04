@@ -1,6 +1,6 @@
 substitutions:
   # Personal C3 profile only; marks the runtime-control/HTTP fix OTA revision.
-  project_version: "3.5.61"
+  project_version: "3.5.62"
 
 # Trusted ESP32-C3 AIO runtime diagnostics.
 # HTTP redirects are disabled for every outbound HTTP request in this profile.
@@ -16,6 +16,16 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # Zero is the boot-local "no attempt yet" sentinel. Unsigned subtraction
+  # handles millis() wraparound when manual requests enforce a minimum gap.
+  - id: aio_svitlobot_last_attempt_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: aio_healthcheck_last_attempt_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
 
 binary_sensor:
   - id: !extend svitlobot_status
@@ -125,13 +135,116 @@ number:
             id(svitlobot).set_shadow_interval(seconds);
             ESP_LOGI("AIO", "Heartbeat interval set to %u s for all services", seconds);
 
-# Time is supplied by the encrypted Home Assistant API. Heartbeat never waits
-# for it: until HA synchronizes the clock, display uptime rather than a fake
-# wall-clock timestamp. Use explicit UTC regardless of the build runner timezone.
+# Independent network time: Home Assistant is not needed for UTC timestamps.
+# Heartbeat never blocks on NTP; retain the honest uptime fallback until synced.
+# Requires IoT DNS plus outbound UDP/123 (local NTP can be substituted later).
 time:
-  - platform: homeassistant
+  - platform: sntp
     id: aio_clock
-    timezone: UTC
+    timezone: Etc/UTC
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+      - 2.pool.ntp.org
+    on_time_sync:
+      then:
+        - logger.log: "AIO: SNTP clock synchronized"
+
+# Timestamp real attempt starts (scheduled and manual) without exposing URLs.
+# These inherited hooks run only after the ordinary per-service preflight.
+script:
+  - id: !extend before_svitlobot_request
+    then:
+      - lambda: |-
+          id(aio_svitlobot_last_attempt_ms) = millis() | 1U;
+  - id: !extend before_healthcheck_request
+    then:
+      - lambda: |-
+          id(aio_healthcheck_last_attempt_ms) = millis() | 1U;
+
+# Two authenticated local/HA manual controls. They reuse the existing service
+# scripts and their validation/result handlers. Shared Shadow gate prevents
+# collision with the composite heartbeat or OTA. Minimum 30s since the last
+# attempt prevents rapid clicks; after HTTP 429 use the configured full cadence.
+# Paused SvitloBot remains paused; Healthchecks is independent.
+button:
+  - platform: template
+    name: "Send Now"
+    id: aio_svitlobot_send_now
+    device_id: svitlobot_device
+    entity_category: config
+    icon: mdi:send
+    web_server:
+      sorting_group_id: svitlobot_group
+      sorting_weight: 8
+    on_press:
+      - if:
+          condition:
+            lambda: |-
+              if (!id(esp_wifi).is_connected()) {
+                ESP_LOGW("AIO", "Manual SvitloBot skipped: Wi-Fi disconnected");
+                return false;
+              }
+              const auto &mode = id(svitlobot_connection_mode).state;
+              if (mode == "Paused") {
+                ESP_LOGI("AIO", "Manual SvitloBot skipped: Paused");
+                return false;
+              }
+              if (mode != "Direct" && mode != "Custom Relay") {
+                ESP_LOGW("AIO", "Manual SvitloBot skipped: invalid mode");
+                return false;
+              }
+              const uint32_t last = id(aio_svitlobot_last_attempt_ms);
+              const uint32_t gap = id(svitlobot_delivery_state).state == "HTTP 429"
+                  ? static_cast<uint32_t>(id(aio_heartbeat_interval).state) * 1000U : 30000U;
+              if (last && uint32_t(millis() - last) < gap) {
+                ESP_LOGI("AIO", "Manual SvitloBot skipped: cooldown");
+                return false;
+              }
+              if (!id(svitlobot).begin_manual()) {
+                ESP_LOGI("AIO", "Manual SvitloBot skipped: heartbeat busy or OTA active");
+                return false;
+              }
+              return true;
+          then:
+            - script.execute: svitlobot_ping
+            - script.wait: svitlobot_ping
+            - lambda: 'id(svitlobot).end_manual();'
+
+  - platform: template
+    name: "Send Now"
+    id: aio_healthcheck_send_now
+    device_id: healthcheck_device
+    entity_category: config
+    icon: mdi:send
+    web_server:
+      sorting_group_id: healthcheck_group
+      sorting_weight: 8
+    on_press:
+      - if:
+          condition:
+            lambda: |-
+              if (!id(esp_wifi).is_connected()) {
+                ESP_LOGW("AIO", "Manual HealthCheck skipped: Wi-Fi disconnected");
+                return false;
+              }
+              const uint32_t last = id(aio_healthcheck_last_attempt_ms);
+              const uint32_t gap = id(healthcheck_ack_result) == 3 ||
+                                   id(healthcheck_response_code).state == "429"
+                  ? static_cast<uint32_t>(id(aio_heartbeat_interval).state) * 1000U : 30000U;
+              if (last && uint32_t(millis() - last) < gap) {
+                ESP_LOGI("AIO", "Manual HealthCheck skipped: cooldown");
+                return false;
+              }
+              if (!id(svitlobot).begin_manual()) {
+                ESP_LOGI("AIO", "Manual HealthCheck skipped: heartbeat busy or OTA active");
+                return false;
+              }
+              return true;
+          then:
+            - script.execute: healthcheck_ping
+            - script.wait: healthcheck_ping
+            - lambda: 'id(svitlobot).end_manual();'
 
 # Record last COMPLETED HTTP attempt, not a scheduled/skipped ping. Existing
 # set_state scripts have already published response_code/status when these hooks run.
