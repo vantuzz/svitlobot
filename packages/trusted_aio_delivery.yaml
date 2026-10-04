@@ -239,11 +239,12 @@ script:
           id(custom_url_last_request).publish_state(when + " | " + outcome);
 
 
-# Two authenticated local/HA manual controls. They reuse the existing service
-# scripts and their validation/result handlers. Shared Shadow gate prevents
-# collision with the composite heartbeat or OTA. Minimum 30s since the last
-# attempt prevents rapid clicks; after HTTP 429 use the configured full cadence.
-# Paused SvitloBot remains paused; Healthchecks is independent.
+# Two authenticated local/HA manual controls. They reuse existing service
+# scripts/validation and serialize on the same Shadow gate as the main cycle.
+# The successful manual request RE-ARMS the one common automatic timer; check
+# HC Period/Grace against this deliberate rescheduling in hardware tests.
+# Full heartbeat interval cooldown is measured after the last HTTP completion;
+# additional backoff applies after SvitloBot 429 / Healthchecks rate limitation.
 button:
   - platform: template
     name: "Send Now"
@@ -259,34 +260,45 @@ button:
           condition:
             lambda: |-
               if (!id(esp_wifi).is_connected()) {
-                ESP_LOGW("AIO", "Manual SvitloBot skipped: Wi-Fi disconnected");
+                id(aio_svitlobot_manual_state).publish_state("No Wi-Fi");
                 return false;
               }
               const auto &mode = id(svitlobot_connection_mode).state;
               if (mode == "Paused") {
-                ESP_LOGI("AIO", "Manual SvitloBot skipped: Paused");
+                id(aio_svitlobot_manual_state).publish_state("Paused");
                 return false;
               }
               if (mode != "Direct" && mode != "Custom Relay") {
-                ESP_LOGW("AIO", "Manual SvitloBot skipped: invalid mode");
+                id(aio_svitlobot_manual_state).publish_state("Invalid mode");
                 return false;
               }
-              const uint32_t last = id(aio_svitlobot_last_attempt_ms);
+              uint32_t interval_ms =
+                  static_cast<uint32_t>(id(aio_heartbeat_interval).state) * 1000U;
+              // A rejected request should not invite another manual attempt
+              // shortly afterwards. Scheduled behavior remains unchanged.
               const uint32_t gap = id(svitlobot_delivery_state).state == "HTTP 429"
-                  ? static_cast<uint32_t>(id(aio_heartbeat_interval).state) * 1000U : 30000U;
-              if (last && uint32_t(millis() - last) < gap) {
-                ESP_LOGI("AIO", "Manual SvitloBot skipped: cooldown");
+                  ? std::max<uint32_t>(2U * interval_ms, 120000U) : interval_ms;
+              if (id(aio_svitlobot_attempt_seen) &&
+                  uint32_t(millis() - id(aio_svitlobot_last_completed_ms)) < gap) {
+                id(aio_svitlobot_manual_state).publish_state("Cooldown");
                 return false;
               }
               if (!id(svitlobot).begin_manual()) {
-                ESP_LOGI("AIO", "Manual SvitloBot skipped: heartbeat busy or OTA active");
+                id(aio_svitlobot_manual_state).publish_state("Busy / OTA");
                 return false;
               }
+              id(aio_manual_target) = 1;
+              id(aio_svitlobot_manual_state).publish_state("Accepted");
               return true;
           then:
             - script.execute: svitlobot_ping
             - script.wait: svitlobot_ping
-            - lambda: 'id(svitlobot).end_manual();'
+            - lambda: |-
+                if (id(aio_svitlobot_manual_state).state == "Accepted") {
+                  id(aio_svitlobot_manual_state).publish_state("Skipped (preflight)");
+                }
+                id(aio_manual_target) = 0;
+                id(svitlobot).end_manual();
 
   - platform: template
     name: "Send Now"
@@ -302,30 +314,59 @@ button:
           condition:
             lambda: |-
               if (!id(esp_wifi).is_connected()) {
-                ESP_LOGW("AIO", "Manual HealthCheck skipped: Wi-Fi disconnected");
+                id(aio_healthcheck_manual_state).publish_state("No Wi-Fi");
                 return false;
               }
-              const uint32_t last = id(aio_healthcheck_last_attempt_ms);
-              const uint32_t gap = id(healthcheck_ack_result) == 3 ||
-                                   id(healthcheck_response_code).state == "429"
-                  ? static_cast<uint32_t>(id(aio_heartbeat_interval).state) * 1000U : 30000U;
-              if (last && uint32_t(millis() - last) < gap) {
-                ESP_LOGI("AIO", "Manual HealthCheck skipped: cooldown");
+              uint32_t interval_ms =
+                  static_cast<uint32_t>(id(aio_heartbeat_interval).state) * 1000U;
+              const uint32_t gap =
+                  id(healthcheck_ack_result) == 3 || id(healthcheck_response_code).state == "429"
+                  ? std::max<uint32_t>(2U * interval_ms, 120000U) : interval_ms;
+              if (id(aio_healthcheck_attempt_seen) &&
+                  uint32_t(millis() - id(aio_healthcheck_last_completed_ms)) < gap) {
+                id(aio_healthcheck_manual_state).publish_state("Cooldown");
                 return false;
               }
               if (!id(svitlobot).begin_manual()) {
-                ESP_LOGI("AIO", "Manual HealthCheck skipped: heartbeat busy or OTA active");
+                id(aio_healthcheck_manual_state).publish_state("Busy / OTA");
                 return false;
               }
+              id(aio_manual_target) = 2;
+              id(aio_healthcheck_manual_state).publish_state("Accepted");
               return true;
           then:
             - script.execute: healthcheck_ping
             - script.wait: healthcheck_ping
-            - lambda: 'id(svitlobot).end_manual();'
+            - lambda: |-
+                if (id(aio_healthcheck_manual_state).state == "Accepted") {
+                  id(aio_healthcheck_manual_state).publish_state("Skipped (preflight)");
+                }
+                id(aio_manual_target) = 0;
+                id(svitlobot).end_manual();
 
 # These fields update even when consecutive HTTP responses have the same code.
 # They are grouped with their service in the authenticated ESPHome WebUI and HA.
 text_sensor:
+  - platform: template
+    name: "Manual Request State"
+    id: aio_svitlobot_manual_state
+    device_id: svitlobot_device
+    entity_category: diagnostic
+    icon: mdi:send-check
+    web_server:
+      sorting_group_id: svitlobot_group
+      sorting_weight: 9
+
+  - platform: template
+    name: "Manual Request State"
+    id: aio_healthcheck_manual_state
+    device_id: healthcheck_device
+    entity_category: diagnostic
+    icon: mdi:send-check
+    web_server:
+      sorting_group_id: healthcheck_group
+      sorting_weight: 9
+
   - platform: template
     name: "Last Request"
     id: svitlobot_last_request
