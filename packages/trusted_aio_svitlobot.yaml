@@ -43,6 +43,7 @@ script:
           condition:
             and:
               - wifi.connected:
+              - lambda: 'return !id(aio_svitlobot_skip_current_auto);'
               - lambda: |-
                   if (id(svitlobot_connection_mode).state == "Direct") {
                     return id(svitlobot_key).has_state() && id(svitlobot_key).state.length() > 3;
@@ -191,6 +192,9 @@ script:
     then:
       - logger.log: "Without request..."
       - lambda: |-
+          // A near-immediate scheduled duplicate after a manual attempt should
+          // leave the last accepted result unchanged; it is not a failure.
+          if (id(aio_svitlobot_skip_current_auto)) return;
           // Publish only diagnostic categories: never echo URL, key or token.
           if (!id(esp_wifi).is_connected()) {
             id(svitlobot_delivery_state).publish_state("Waiting for Wi-Fi");
