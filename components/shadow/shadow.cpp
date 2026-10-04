@@ -26,7 +26,7 @@ void Shadow::execute_script_() {
     this->mark_failed();
     return;
   }
-  if (this->script_->is_running()) {
+  if (this->manual_active_ || this->script_->is_running()) {
     ESP_LOGD(TAG, "Previous heartbeat still running; skip overlapping launch");
     return;
   }
@@ -41,6 +41,25 @@ void Shadow::schedule_next_() {
     this->execute_script_();
     this->schedule_next_();
   });
+}
+
+bool Shadow::begin_manual() {
+  // First automatic tick establishes the scheduler. Never start during OTA,
+  // an active composite heartbeat, or another manual request.
+  if (!this->first_tick_complete_ || this->suspended_.load(std::memory_order_acquire) ||
+      this->manual_active_ || this->script_ == nullptr || this->script_->is_running()) {
+    return false;
+  }
+  this->manual_active_ = true;
+  return true;
+}
+
+void Shadow::end_manual() {
+  if (!this->manual_active_) return;
+  this->manual_active_ = false;
+  // A manual request replaces, rather than duplicates, the pending cycle.
+  // This also prevents an immediate scheduled follow-up after a manual ping.
+  if (this->first_tick_complete_) this->schedule_next_();
 }
 
 void Shadow::set_shadow_interval(uint32_t seconds) {
