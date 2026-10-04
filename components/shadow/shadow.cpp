@@ -57,9 +57,9 @@ bool Shadow::begin_manual() {
 void Shadow::end_manual() {
   if (!this->manual_active_) return;
   this->manual_active_ = false;
-  // A manual request replaces, rather than duplicates, the pending cycle.
-  // This also prevents an immediate scheduled follow-up after a manual ping.
-  if (this->first_tick_complete_) this->schedule_next_();
+  // Preserve the pending automatic timer. Service-specific C3 preflight
+  // deduplicates only a near-immediate request to the just-pinged service;
+  // Healthchecks/Custom URL must not be starved by repeated manual presses.
 }
 
 void Shadow::set_shadow_interval(uint32_t seconds) {
