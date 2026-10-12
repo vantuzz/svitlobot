@@ -274,7 +274,7 @@ interval:
 
           set_led(true);
           publish_led_state("Healthy (steady)");
- 
+
 # Independent network time: Home Assistant is not needed for UTC timestamps.
 # Heartbeat never blocks on NTP; retain the honest uptime fallback until synced.
 # Requires IoT DNS plus outbound UDP/123 (local NTP can be substituted later).
