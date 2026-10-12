@@ -1,6 +1,6 @@
-# Trusted AIO 3.5.63 — посібник користувача (ESP32-C3)
+# Trusted AIO 3.5.64 — посібник користувача (ESP32-C3)
 
-> **Статус на 2026-10-12:** **3.5.62 встановлена на фізичному ESP32-C3**. Після правильного OTA підтверджено появу обох `Send Now` / `Manual Request State`, незалежний SNTP-час і успішний Healthchecks HTTP 200 acknowledgment; перший SvitloBot/Custom Relay запит після reboot отримав HTTP 429, тому повний hardware sign-off ще не завершений. **3.5.63** — наступний source-кандидат, який додає видиму `Firmware Version` у Diagnostic. PR залишається Draft; тривалий тест стабільності не вважати завершеним без звіту. Не встановлюйте чужий персоналізований binary.
+> **Статус на 2026-10-12:** **3.5.62 встановлена на фізичному ESP32-C3**. Після правильного OTA підтверджено появу обох `Send Now` / `Manual Request State`, незалежний SNTP-час і успішний Healthchecks HTTP 200 acknowledgment; перший SvitloBot/Custom Relay запит після reboot отримав HTTP 429, тому повний hardware sign-off ще не завершений. **3.5.64** — наступний source-кандидат: він додає видиму `Firmware Version`, прибирає нефункціональний `Show Log` і використовує синій LED плати як локальний індикатор стану. PR залишається Draft; тривалий тест стабільності не вважати завершеним без звіту. Не встановлюйте чужий персоналізований binary.
 >
 > Для AI та розробника: [технічний контракт / карта коду / тест-план](TRUSTED_AIO_DEVELOPMENT.md).
 
@@ -12,7 +12,7 @@ Trusted AIO об'єднує три незалежні канали в одном
 - **Healthchecks.io:** окремий прямий HTTPS heartbeat; режим `Paused` для SvitloBot не зупиняє його.
 - **Custom URL:** необов'язковий третій HTTP(S) GET, лише якщо налаштований.
 
-Цей профіль збирається із `all-in-one/aio_esp32c3.yaml` і спеціальних `packages/trusted_aio_*.yaml`. Не переносіть його поведінку автоматично на інші AIO-плати або upstream. Платформа збірки: **ESPHome 2026.5.1**, ESP-IDF, ESP32-C3. На пристрої зараз встановлена **3.5.62**. Наступний source-кандидат — **3.5.63**. `ESPHome Version` у WebUI показує версію платформи, а нова сутність `Firmware Version` у Diagnostic показує саме версію Trusted AIO профілю. Після складання 3.5.63 `User-Agent` має містити `esphome/all-in-one (3.5.63)`.
+Цей профіль збирається із `all-in-one/aio_esp32c3.yaml` і спеціальних `packages/trusted_aio_*.yaml`. Не переносіть його поведінку автоматично на інші AIO-плати або upstream. Платформа збірки: **ESPHome 2026.5.1**, ESP-IDF, ESP32-C3. На пристрої зараз встановлена **3.5.62**. Наступний source-кандидат — **3.5.64**. `ESPHome Version` у WebUI показує версію платформи, а `Firmware Version` у Diagnostic показує саме версію Trusted AIO профілю. Після складання 3.5.64 `User-Agent` має містити `esphome/all-in-one (3.5.64)`.
 
 ## 2. Як працює передавання
 
