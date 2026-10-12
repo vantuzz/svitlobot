@@ -10,7 +10,8 @@ esphome:
   project:
     name: "${project_name}"
     version: "${project_version}"
-  # No boot-time WebUI log exposure; users may opt in with Show Log.
+  # Keep WebUI log streaming disabled. Runtime toggling is not supported by
+  # ESPHome 2026.5.1 because log:false does not register the web logger listener.
 
 api:
   reboot_timeout: 0s
@@ -54,19 +55,6 @@ improv_serial:
 
 debug:
   update_interval: never
-
-switch:
-  - platform: template
-    name: "Show Log"
-    id: show_log
-    icon: mdi:math-log
-    optimistic: true
-    restore_mode: ALWAYS_OFF
-    entity_category: config
-    disabled_by_default: true
-    on_state:
-      - lambda: |-
-          id(esp_web)->set_expose_log(x);
 
 script:
   - id: site_ping
