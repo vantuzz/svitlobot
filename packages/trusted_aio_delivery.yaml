@@ -154,8 +154,8 @@ select:
     id: aio_status_led_mode
     options:
       - Automatic
-      - On
-      - Off
+      - "On"
+      - "Off"
     initial_option: Automatic
     restore_value: true
     optimistic: true
