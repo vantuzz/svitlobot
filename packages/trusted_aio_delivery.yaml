@@ -1,6 +1,6 @@
 substitutions:
   # Personal C3 profile only; marks the runtime-control/HTTP fix OTA revision.
-  project_version: "3.5.62"
+  project_version: "3.5.63"
   # The shared HC package uses this optional guard ONLY for Trusted C3.
   trusted_aio_healthcheck_gate: '!id(aio_healthcheck_skip_current_auto)'
 
@@ -389,6 +389,14 @@ button:
 # These fields update even when consecutive HTTP responses have the same code.
 # They are grouped with their service in the authenticated ESPHome WebUI and HA.
 text_sensor:
+  - platform: template
+    name: "Firmware Version"
+    id: aio_firmware_version
+    entity_category: diagnostic
+    icon: mdi:tag-outline
+    lambda: |-
+      return std::string("${project_version}");
+
   - platform: template
     name: "Manual Request State"
     id: aio_svitlobot_manual_state
