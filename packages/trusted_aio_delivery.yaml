@@ -1,6 +1,6 @@
 substitutions:
   # Personal C3 profile only; marks the runtime-control/HTTP fix OTA revision.
-  project_version: "3.5.63"
+  project_version: "3.5.64"
   # The shared HC package uses this optional guard ONLY for Trusted C3.
   trusted_aio_healthcheck_gate: '!id(aio_healthcheck_skip_current_auto)'
 
@@ -59,6 +59,11 @@ globals:
     type: bool
     restore_value: no
     initial_value: 'false'
+  # 250 ms phase counter for the onboard blue status LED patterns.
+  - id: aio_status_led_tick
+    type: uint8_t
+    restore_value: no
+    initial_value: '0'
 
 binary_sensor:
   - id: !extend svitlobot_status
@@ -144,6 +149,19 @@ select:
   - id: !extend svitlobot_connection_mode
     device_id: svitlobot_device
 
+  - platform: template
+    name: "Status LED Mode"
+    id: aio_status_led_mode
+    options:
+      - Automatic
+      - On
+      - Off
+    initial_option: Automatic
+    restore_value: true
+    optimistic: true
+    entity_category: config
+    icon: mdi:led-on
+
 # Runtime AIO cadence (all three services). Restored at setup before Shadow starts.
 # The local main-loop scheduler re-arms its named timeout when changed;
 # an already-running network request is never interrupted. No extra tasks exist.
@@ -168,6 +186,95 @@ number:
             id(svitlobot).set_shadow_interval(seconds);
             ESP_LOGI("AIO", "Heartbeat interval set to %u s for all services", seconds);
 
+# ESP32-C3 Super Mini onboard blue LED: GPIO8, active LOW.
+# GPIO8 is a strapping pin, but firmware only drives it after ROM boot.
+# The red LED is hard-wired as a power indicator and cannot be software-controlled.
+output:
+  - platform: gpio
+    id: aio_blue_status_led
+    pin: GPIO8
+    inverted: true
+
+# Local visual diagnostics. Automatic mode:
+# - steady blue: Wi-Fi up and no known failure on configured services;
+# - fast blink (250 ms): Wi-Fi down;
+# - slow blink (1 s): at least one configured endpoint has a known failed result.
+# Synchronous HTTP may pause animation during an in-flight timeout.
+interval:
+  - interval: 250ms
+    then:
+      - lambda: |-
+          auto set_led = [&](bool on) {
+            if (on) id(aio_blue_status_led).turn_on();
+            else id(aio_blue_status_led).turn_off();
+          };
+          auto publish_led_state = [&](const std::string &value) {
+            if (!id(aio_status_led_state).has_state() ||
+                id(aio_status_led_state).state != value) {
+              id(aio_status_led_state).publish_state(value);
+            }
+          };
+
+          const auto &mode = id(aio_status_led_mode).state;
+          if (mode == "On") {
+            set_led(true);
+            publish_led_state("Forced On");
+            return;
+          }
+          if (mode == "Off") {
+            set_led(false);
+            publish_led_state("Forced Off");
+            return;
+          }
+
+          id(aio_status_led_tick) = (id(aio_status_led_tick) + 1U) & 0x07U;
+
+          if (!id(esp_wifi).is_connected()) {
+            set_led((id(aio_status_led_tick) & 0x01U) == 0U);
+            publish_led_state("No Wi-Fi (fast blink)");
+            return;
+          }
+
+          const bool svitlobot_active = id(svitlobot_connection_mode).state != "Paused";
+          const bool svitlobot_failed =
+              svitlobot_active && id(svitlobot_send_errors) >= 0 &&
+              !id(svitlobot_status).state;
+
+          const bool healthcheck_configured =
+              id(healthcheck_key).has_state() && id(healthcheck_key).state.length() > 3;
+          const bool healthcheck_failed =
+              healthcheck_configured && id(healthcheck_send_errors) >= 0 &&
+              !id(healthcheck_status).state;
+
+          const bool custom_configured =
+              id(custom_url).has_state() &&
+              id(custom_url).state.find("http") != std::string::npos;
+          const bool custom_failed =
+              custom_configured && id(custom_url_send_errors) >= 0 &&
+              !id(custom_url_status).state;
+
+          const int failed_count =
+              (svitlobot_failed ? 1 : 0) +
+              (healthcheck_failed ? 1 : 0) +
+              (custom_failed ? 1 : 0);
+
+          if (failed_count > 0) {
+            set_led(id(aio_status_led_tick) < 4U);
+            if (failed_count > 1) {
+              publish_led_state("Multiple endpoints failed (slow blink)");
+            } else if (svitlobot_failed) {
+              publish_led_state("SvitloBot failed (slow blink)");
+            } else if (healthcheck_failed) {
+              publish_led_state("HealthCheck failed (slow blink)");
+            } else {
+              publish_led_state("Custom URL failed (slow blink)");
+            }
+            return;
+          }
+
+          set_led(true);
+          publish_led_state("Healthy (steady)");
+ 
 # Independent network time: Home Assistant is not needed for UTC timestamps.
 # Heartbeat never blocks on NTP; retain the honest uptime fallback until synced.
 # Requires IoT DNS plus outbound UDP/123 (local NTP can be substituted later).
@@ -389,6 +496,12 @@ button:
 # These fields update even when consecutive HTTP responses have the same code.
 # They are grouped with their service in the authenticated ESPHome WebUI and HA.
 text_sensor:
+  - platform: template
+    name: "Status LED State"
+    id: aio_status_led_state
+    entity_category: diagnostic
+    icon: mdi:led-outline
+
   - platform: template
     name: "Firmware Version"
     id: aio_firmware_version
